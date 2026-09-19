@@ -1,0 +1,35 @@
+{
+  "title": "Ambilight Sync for Home Assistant",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect Philips TV",
+        "description": "Enter the TV address. After pairing, lights and sync settings are configured from the Ambilight Sync sidebar panel.",
+        "data": {
+          "host": "TV IP address / hostname",
+          "api_version": "jointSPACE API version"
+        }
+      },
+      "pair": {
+        "title": "Pair with TV",
+        "description": "A PIN should appear on the TV. Enter it below.",
+        "data": {
+          "pin": "PIN"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Unable to connect to the TV",
+      "invalid_pin": "Invalid PIN"
+    },
+    "abort": {
+      "already_configured": "This TV is already configured",
+      "pairing_failure": "Pairing failed: {error_id}"
+    }
+  },
+  "entity": {
+    "switch": {
+      "sync": {"name": "Ambilight Sync"}
+    }
+  }
+}

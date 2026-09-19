@@ -1,0 +1,33 @@
+{
+  "title": "Ambilight Sync for Home Assistant",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Подключение Philips TV",
+        "description": "Укажи адрес телевизора. После сопряжения лампы и параметры синхронизации настраиваются через пункт Ambilight Sync в боковом меню.",
+        "data": {
+          "host": "IP-адрес / имя телевизора",
+          "api_version": "Версия jointSPACE API"
+        }
+      },
+      "pair": {
+        "title": "Сопряжение с телевизором",
+        "description": "На телевизоре должен появиться PIN. Введи его ниже.",
+        "data": {"pin": "PIN"}
+      }
+    },
+    "error": {
+      "cannot_connect": "Не удалось подключиться к телевизору",
+      "invalid_pin": "Неверный PIN"
+    },
+    "abort": {
+      "already_configured": "Этот телевизор уже настроен",
+      "pairing_failure": "Ошибка сопряжения: {error_id}"
+    }
+  },
+  "entity": {
+    "switch": {
+      "sync": {"name": "Синхронизация Ambilight"}
+    }
+  }
+}
