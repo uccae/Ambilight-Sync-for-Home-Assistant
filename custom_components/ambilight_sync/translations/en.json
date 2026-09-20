@@ -13,7 +13,9 @@
       "pair": {
         "title": "Pair with TV",
         "description": "A PIN should appear on the TV. Enter it below.",
-        "data": {"pin": "PIN"}
+        "data": {
+          "pin": "PIN"
+        }
       }
     },
     "error": {
@@ -27,7 +29,25 @@
   },
   "entity": {
     "switch": {
-      "sync": {"name": "Ambilight Sync"}
+      "sync": {
+        "name": "Ambilight Sync"
+      }
+    }
+  },
+  "services": {
+    "activate_preset": {
+      "name": "Activate preset",
+      "description": "Activate an Ambilight Sync preset by its name or internal ID.",
+      "fields": {
+        "preset": {
+          "name": "Preset",
+          "description": "Preset name or internal ID."
+        },
+        "entry_id": {
+          "name": "Config entry ID",
+          "description": "Optional. Required only when more than one Ambilight Sync TV is configured."
+        }
+      }
     }
   }
 }

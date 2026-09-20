@@ -9,22 +9,56 @@ No Hue Bridge, no Hue Sync Box, no screen capture, no cloud processing.
 ## Features
 
 - Reads Philips TV Ambilight colors through the jointSPACE API
-- Works with Home Assistant `light.*` entities
-- Supports Matter, Zigbee, Philips Hue and Wi-Fi RGB lights
-- Multiple lights per zone
-- HomeKit-compatible `switch.ambilight_sync`
-- Local processing inside Home Assistant
-- Hardware transition support
-- Adjustable update rate, brightness, saturation and threshold
-- Minimum brightness for dark scenes
-- Black hold and separate fade-to-black timing
-- Color modes:
-  - **Average** — simple RGB averaging
-  - **Perceptual** — favors visually meaningful bright and saturated colors while reducing the influence of near-black segments
-  - **Dominant** — groups similar hues and selects the strongest color group without letting one random bright segment dominate
-- Extended zones with configurable corner influence
-- Sidebar configuration panel
+- Works with standard Home Assistant `light.*` entities
+- Supports Matter, Zigbee, Philips Hue, Wi-Fi RGB lights and other compatible light integrations
+- Runs locally inside Home Assistant
+
+### Light configuration
+
+- Multiple weighted Ambilight sources per light
+- Independent update rate for each light
+- Per-light overrides for brightness, saturation, transition, smoothing, thresholds and color processing
+- Live per-light color preview in the sidebar
 - Restores previous light state when sync is stopped
+
+### Presets
+
+- Create, duplicate, rename and delete custom presets
+- Each preset can store its own global settings, light mappings and per-light overrides
+- Switch presets from Home Assistant automations using `ambilight_sync.activate_preset`
+
+### Color processing
+
+- **Average** — simple RGB averaging
+- **Perceptual** — favors visually meaningful bright and saturated colors while reducing the influence of near-black segments
+- **Dominant** — groups similar hues and selects the strongest color group without allowing a single bright segment to dominate the entire zone
+- Adjustable brightness, saturation and change threshold
+- Minimum brightness for dark scenes
+- Black hold to prevent flickering during short dark frames
+- Separate fade-to-black timing
+
+### Ambilight zones
+
+- Left
+- Right
+- Top
+- Bottom
+- Whole screen
+- Extended side zones with configurable corner influence
+- Multiple zones can be mixed together with custom weights for a single light
+
+### Transitions and timing
+
+- Hardware transition support when available
+- Separate TV polling rate and per-light update rate
+- Software smoothing
+- Designed to support both slow ambient lights and high-frequency devices
+
+### Home Assistant
+
+- Dedicated sidebar configuration panel
+- HomeKit-compatible `switch.ambilight_sync`
+- Preset switching from automations
 
 ## How it works
 
@@ -46,6 +80,25 @@ Home Assistant
 ```
 
 Everything runs locally inside Home Assistant.
+
+## Presets and per-light settings
+
+Each preset stores its own global settings, light assignments, source mixer and individual light overrides. A light can mix several Ambilight zones, for example:
+
+```text
+Left   50%
+Right  50%
+```
+
+Only enabled overrides replace the preset global values. TV polling is global, while each light can override how often it receives commands. This lets the TV be sampled frequently without flooding slower bulbs.
+
+Presets can also be activated from Home Assistant automations with the `ambilight_sync.activate_preset` service:
+
+```yaml
+action: ambilight_sync.activate_preset
+data:
+  preset: Movie
+```
 
 ## Zones
 
@@ -92,7 +145,8 @@ This is separate from the normal color transition time.
 These settings are intentionally slow and smooth:
 
 ```text
-Update rate:          1 Hz
+TV polling rate:      1 Hz
+Light update rate:     1 Hz
 Hardware transition:  0.8 s
 Software smoothing:   0%
 Threshold:             20
@@ -104,7 +158,7 @@ Fade to black:          1.0 s
 Corner influence:       35%
 ```
 
-Higher update rates are not always better. Some smart bulbs become more delayed when they receive new RGB commands too frequently.
+Higher light update rates are not always better. Some smart bulbs become more delayed when they receive new RGB commands too frequently. If your TV handles it comfortably, you can raise TV polling to 2–4 Hz while keeping slower lights at 1 Hz so they receive fresher frames without receiving more commands.
 
 ## Installation
 
@@ -125,6 +179,25 @@ to:
 4. Go to **Settings → Devices & services → Add integration**.
 5. Search for **Ambilight Sync** and pair the Philips TV.
 6. Open **Ambilight Sync** from the Home Assistant sidebar to configure lights and behavior.
+
+## Tested lights
+
+Real-world behavior can vary significantly depending on the device, integration and transport used.
+
+| Device | Connection | Result | Notes |
+|---|---|---|---|
+| Govee M1 | Govee lights local | ✅ Good | Works well. High update rates are recommended because smooth hardware color transitions are not available. |
+| Govee M1 | Matter | ⚠️ Poor | Slow updates, noticeable lag, and no smooth color transition. Not recommended for Ambilight sync. |
+| Xiaomi Mi Bedside Lamp 2 | HomeKit | ✅ Excellent | Very responsive. Smooth color transitions work well. Tested up to 8 Hz without noticeable slowdown. |
+| Yandex GX53 | Matter | ✅ Good | Works well at low update rates with smooth transitions. Higher rates may introduce delay. |
+
+### Notes
+
+Different smart lights behave very differently under frequent RGB updates.
+
+Some devices perform best with low update rates and long hardware transitions, while others require high update rates because they do not support smooth transitions internally.
+
+For this reason, per-light update rate and transition settings are recommended.
 
 ## HomeKit
 
