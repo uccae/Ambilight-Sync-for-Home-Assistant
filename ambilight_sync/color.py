@@ -63,6 +63,107 @@ def _pixels_from_side(side: Any) -> list[RGB]:
     return result
 
 
+
+
+def _layer_from_payload(payload: Any) -> Mapping[str, Any] | None:
+    """Return the first Ambilight layer from a jointSPACE payload."""
+    if not isinstance(payload, Mapping) or not payload:
+        return None
+    candidate = payload.get("layer1")
+    if isinstance(candidate, Mapping):
+        return candidate
+    for value in payload.values():
+        if isinstance(value, Mapping):
+            return value
+    return None
+
+
+def extract_spatial_weight_map(
+    payload: Any, x: float, y: float, falloff_percent: float
+) -> list[dict[str, Any]]:
+    """Return positioned Ambilight pixels and their relative spatial weights.
+
+    The returned map is also suitable for diagnostics/UI visualization. ``weight``
+    is normalized so the strongest pixel is 1.0. ``active`` mirrors the cutoff
+    used by the actual Spatial color calculation, so the sidebar can display
+    the same influence area that the engine really uses.
+    """
+    layer = _layer_from_payload(payload)
+    if layer is None:
+        return []
+
+    x = max(-100.0, min(100.0, float(x)))
+    y = max(-100.0, min(100.0, float(y)))
+    falloff = max(5.0, min(100.0, float(falloff_percent)))
+    sigma = 18.0 + 1.20 * falloff
+
+    positioned: list[tuple[RGB, float, float, str, int, int]] = []
+
+    def append_side(side_name: str) -> None:
+        pixels = _pixels_from_side(layer.get(side_name))
+        count = len(pixels)
+        if count <= 0:
+            return
+        for index, rgb in enumerate(pixels):
+            t = (index + 0.5) / count
+            if side_name == ZONE_TOP:
+                px, py = -100.0 + 200.0 * t, -100.0
+            elif side_name == ZONE_RIGHT:
+                px, py = 100.0, -100.0 + 200.0 * t
+            elif side_name == ZONE_BOTTOM:
+                px, py = 100.0 - 200.0 * t, 100.0
+            else:  # left is numbered bottom -> top
+                px, py = -100.0, 100.0 - 200.0 * t
+            positioned.append((rgb, px, py, side_name, index, count))
+
+    for side_name in (ZONE_TOP, ZONE_RIGHT, ZONE_BOTTOM, ZONE_LEFT):
+        append_side(side_name)
+
+    if not positioned:
+        return []
+
+    raw: list[tuple[RGB, float, float, str, int, int, float]] = []
+    max_weight = 0.0
+    for rgb, px, py, side_name, index, count in positioned:
+        distance = math.hypot(px - x, py - y)
+        weight = math.exp(-0.5 * (distance / sigma) ** 2)
+        raw.append((rgb, px, py, side_name, index, count, weight))
+        max_weight = max(max_weight, weight)
+
+    if max_weight <= 0:
+        return []
+
+    cutoff_ratio = 0.01 if falloff >= 90.0 else 0.025
+    result: list[dict[str, Any]] = []
+    for rgb, px, py, side_name, index, count, weight in raw:
+        relative = weight / max_weight
+        result.append(
+            {
+                "rgb": list(rgb),
+                "x": round(px, 4),
+                "y": round(py, 4),
+                "side": side_name,
+                "index": index,
+                "count": count,
+                "weight": round(relative, 6),
+                "active": relative >= cutoff_ratio,
+            }
+        )
+    return result
+
+
+def extract_spatial_samples(
+    payload: Any, x: float, y: float, falloff_percent: float
+) -> WeightedSamples:
+    """Weight individual Ambilight pixels by distance from a virtual light."""
+    weight_map = extract_spatial_weight_map(payload, x, y, falloff_percent)
+    return [
+        (tuple(item["rgb"]), float(item["weight"]))  # type: ignore[arg-type]
+        for item in weight_map
+        if item["active"]
+    ]
+
+
 def _weighted_average(samples: WeightedSamples) -> RGB | None:
     if not samples:
         return None
@@ -267,19 +368,7 @@ def extract_zone_samples(
     bottom-right, and left starts at bottom-left. Composite zones use the
     nearest quarter of adjacent edges, weighted by Corner influence.
     """
-    if not isinstance(payload, Mapping) or not payload:
-        return {}
-
-    layer: Mapping[str, Any] | None = None
-    candidate = payload.get("layer1")
-    if isinstance(candidate, Mapping):
-        layer = candidate
-    else:
-        for value in payload.values():
-            if isinstance(value, Mapping):
-                layer = value
-                break
-
+    layer = _layer_from_payload(payload)
     if layer is None:
         return {}
 
@@ -375,3 +464,16 @@ def normalized_rgb(rgb: RGB) -> RGB:
         return (0, 0, 0)
     scale = 255.0 / peak
     return tuple(_clamp_channel(channel * scale) for channel in rgb)  # type: ignore[return-value]
+
+def rec709_luminance_percent(rgb: RGB) -> float:
+    """Return Rec.709 luma for an 8-bit RGB color as 0..100 percent."""
+    r, g, b = (max(0.0, min(255.0, float(channel))) / 255.0 for channel in rgb)
+    return max(0.0, min(100.0, (0.2126 * r + 0.7152 * g + 0.0722 * b) * 100.0))
+
+
+def payload_is_all_zero(payload: Any) -> bool:
+    """Return True only when Ambilight payload contains samples and all are 0,0,0."""
+    zones = extract_zone_samples(payload, 0.0)
+    samples = zones.get(ZONE_ALL, [])
+    return bool(samples) and all(rgb == (0, 0, 0) for rgb, _ in samples)
+

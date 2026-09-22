@@ -8,13 +8,21 @@ from typing import Any
 from .const import (
     COLOR_MODES,
     CONF_BLACK_HOLD,
+    CONF_BLACK_THRESHOLD,
     CONF_BRIGHTNESS,
     CONF_COLOR_MODE,
     CONF_CORNER_INFLUENCE,
     CONF_FADE_TO_BLACK,
     CONF_MINIMUM_BRIGHTNESS,
+    CONF_OFF_DELAY,
     CONF_POLL_RATE,
+    CONF_POSITION_MODE,
+    CONF_POSITION_X,
+    CONF_POSITION_Y,
+    CONF_POSITION_FALLOFF,
     CONF_RESTORE_ON_STOP,
+    CONF_SCENE_CUT_THRESHOLD,
+    CONF_SCENE_CUT_TRANSITION,
     CONF_SATURATION,
     CONF_SMOOTHING,
     CONF_SOURCE,
@@ -22,27 +30,47 @@ from .const import (
     CONF_TRANSITION,
     CONF_UPDATE_RATE,
     DEFAULT_BLACK_HOLD,
+    DEFAULT_BLACK_THRESHOLD,
     DEFAULT_BRIGHTNESS,
     DEFAULT_COLOR_MODE,
     DEFAULT_CORNER_INFLUENCE,
     DEFAULT_FADE_TO_BLACK,
     DEFAULT_MINIMUM_BRIGHTNESS,
+    DEFAULT_OFF_DELAY,
     DEFAULT_POLL_RATE,
+    DEFAULT_POSITION_MODE,
+    DEFAULT_POSITION_X,
+    DEFAULT_POSITION_Y,
+    DEFAULT_POSITION_FALLOFF,
     DEFAULT_RESTORE_ON_STOP,
+    DEFAULT_SCENE_CUT_THRESHOLD,
+    DEFAULT_SCENE_CUT_TRANSITION,
     DEFAULT_SATURATION,
     DEFAULT_SMOOTHING,
     DEFAULT_SOURCE,
     DEFAULT_THRESHOLD,
     DEFAULT_TRANSITION,
     DEFAULT_UPDATE_RATE,
+    MAX_BLACK_THRESHOLD,
+    MAX_POSITION_FALLOFF,
     MAX_UPDATE_RATE,
+    MIN_BLACK_THRESHOLD,
+    MIN_POSITION_FALLOFF,
     MIN_UPDATE_RATE,
+    POSITION_MODE_MANUAL,
+    POSITION_MODE_SPATIAL,
+    POSITION_MODES,
     SOURCES,
-    ZONES,
+    ZONE_ALL,
+    ZONE_BOTTOM,
     ZONE_CONFIG_KEYS,
+    ZONE_LEFT,
+    ZONE_RIGHT,
+    ZONE_TOP,
+    ZONES,
 )
 
-PROFILE_SCHEMA_VERSION = 3
+PROFILE_SCHEMA_VERSION = 5
 CONF_PROFILE_CONFIG = "profile_config"
 DEFAULT_PRESET_ID = "default"
 DEFAULT_PRESET_NAME = "Default"
@@ -55,11 +83,22 @@ OVERRIDABLE_SETTINGS = (
     CONF_MINIMUM_BRIGHTNESS,
     CONF_SATURATION,
     CONF_THRESHOLD,
+    CONF_BLACK_THRESHOLD,
     CONF_TRANSITION,
     CONF_BLACK_HOLD,
     CONF_FADE_TO_BLACK,
+    CONF_OFF_DELAY,
+    CONF_SCENE_CUT_THRESHOLD,
+    CONF_SCENE_CUT_TRANSITION,
     CONF_CORNER_INFLUENCE,
 )
+
+
+def _float(raw: Any, default: float) -> float:
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return default
 
 
 def normalize_settings(raw: Any) -> dict[str, Any]:
@@ -75,37 +114,41 @@ def normalize_settings(raw: Any) -> dict[str, Any]:
     if color_mode not in COLOR_MODES:
         color_mode = DEFAULT_COLOR_MODE
 
-    # v0.2.0b used one value for both TV polling and light output.  When
-    # loading that schema, seed the new poll rate from the old update rate so
-    # existing presets behave exactly as before until the user changes it.
     update_rate = max(
         MIN_UPDATE_RATE,
-        min(MAX_UPDATE_RATE, float(raw.get(CONF_UPDATE_RATE, DEFAULT_UPDATE_RATE))),
+        min(MAX_UPDATE_RATE, _float(raw.get(CONF_UPDATE_RATE), DEFAULT_UPDATE_RATE)),
     )
+    # Old profile schemas had only update_rate. Preserve their effective cadence
+    # by using it as the initial TV polling rate when poll_rate is absent.
     poll_rate = max(
         MIN_UPDATE_RATE,
         min(
             MAX_UPDATE_RATE,
-            float(raw.get(CONF_POLL_RATE, raw.get(CONF_UPDATE_RATE, DEFAULT_POLL_RATE))),
+            _float(raw.get(CONF_POLL_RATE), _float(raw.get(CONF_UPDATE_RATE), DEFAULT_POLL_RATE)),
         ),
     )
-    smoothing = max(0.0, min(95.0, float(raw.get(CONF_SMOOTHING, DEFAULT_SMOOTHING))))
-    brightness = max(10.0, min(100.0, float(raw.get(CONF_BRIGHTNESS, DEFAULT_BRIGHTNESS))))
+    smoothing = max(0.0, min(95.0, _float(raw.get(CONF_SMOOTHING), DEFAULT_SMOOTHING)))
+    brightness = max(10.0, min(100.0, _float(raw.get(CONF_BRIGHTNESS), DEFAULT_BRIGHTNESS)))
     minimum_brightness = max(
         0.0,
-        min(100.0, float(raw.get(CONF_MINIMUM_BRIGHTNESS, DEFAULT_MINIMUM_BRIGHTNESS))),
+        min(100.0, _float(raw.get(CONF_MINIMUM_BRIGHTNESS), DEFAULT_MINIMUM_BRIGHTNESS)),
     )
     minimum_brightness = min(minimum_brightness, brightness)
-    saturation = max(0.0, min(150.0, float(raw.get(CONF_SATURATION, DEFAULT_SATURATION))))
-    threshold = max(0.0, min(100.0, float(raw.get(CONF_THRESHOLD, DEFAULT_THRESHOLD))))
-    transition = max(0.0, min(2.0, float(raw.get(CONF_TRANSITION, DEFAULT_TRANSITION))))
-    black_hold = max(0.0, min(1000.0, float(raw.get(CONF_BLACK_HOLD, DEFAULT_BLACK_HOLD))))
-    fade_to_black = max(
-        0.0, min(5.0, float(raw.get(CONF_FADE_TO_BLACK, DEFAULT_FADE_TO_BLACK)))
+    saturation = max(0.0, min(150.0, _float(raw.get(CONF_SATURATION), DEFAULT_SATURATION)))
+    threshold = max(0.0, min(100.0, _float(raw.get(CONF_THRESHOLD), DEFAULT_THRESHOLD)))
+    black_threshold = max(
+        MIN_BLACK_THRESHOLD,
+        min(MAX_BLACK_THRESHOLD, _float(raw.get(CONF_BLACK_THRESHOLD), DEFAULT_BLACK_THRESHOLD)),
     )
+    transition = max(0.0, min(2.0, _float(raw.get(CONF_TRANSITION), DEFAULT_TRANSITION)))
+    black_hold = max(0.0, min(1000.0, _float(raw.get(CONF_BLACK_HOLD), DEFAULT_BLACK_HOLD)))
+    fade_to_black = max(0.0, min(10.0, _float(raw.get(CONF_FADE_TO_BLACK), DEFAULT_FADE_TO_BLACK)))
+    off_delay = max(0.0, min(10.0, _float(raw.get(CONF_OFF_DELAY), DEFAULT_OFF_DELAY)))
+    scene_cut_threshold = max(0.0, min(100.0, _float(raw.get(CONF_SCENE_CUT_THRESHOLD), DEFAULT_SCENE_CUT_THRESHOLD)))
+    scene_cut_transition = max(0.0, min(2.0, _float(raw.get(CONF_SCENE_CUT_TRANSITION), DEFAULT_SCENE_CUT_TRANSITION)))
     corner_influence = max(
         0.0,
-        min(100.0, float(raw.get(CONF_CORNER_INFLUENCE, DEFAULT_CORNER_INFLUENCE))),
+        min(100.0, _float(raw.get(CONF_CORNER_INFLUENCE), DEFAULT_CORNER_INFLUENCE)),
     )
     restore = bool(raw.get(CONF_RESTORE_ON_STOP, DEFAULT_RESTORE_ON_STOP))
 
@@ -119,22 +162,20 @@ def normalize_settings(raw: Any) -> dict[str, Any]:
         CONF_MINIMUM_BRIGHTNESS: minimum_brightness,
         CONF_SATURATION: saturation,
         CONF_THRESHOLD: threshold,
+        CONF_BLACK_THRESHOLD: black_threshold,
         CONF_TRANSITION: transition,
         CONF_BLACK_HOLD: black_hold,
         CONF_FADE_TO_BLACK: fade_to_black,
+        CONF_OFF_DELAY: off_delay,
+        CONF_SCENE_CUT_THRESHOLD: scene_cut_threshold,
+        CONF_SCENE_CUT_TRANSITION: scene_cut_transition,
         CONF_CORNER_INFLUENCE: corner_influence,
         CONF_RESTORE_ON_STOP: restore,
     }
 
 
 def normalize_overrides(raw: Any, global_settings: dict[str, Any]) -> dict[str, Any]:
-    """Normalize only explicitly overridden per-light settings.
-
-    Values are clamped independently here. Cross-setting constraints such as
-    minimum brightness <= maximum brightness are applied later by
-    ``effective_settings`` so an override keeps its intent if global values
-    change in another preset edit.
-    """
+    """Normalize only explicitly overridden per-light settings."""
     if not isinstance(raw, dict):
         return {}
 
@@ -151,9 +192,13 @@ def normalize_overrides(raw: Any, global_settings: dict[str, Any]) -> dict[str, 
         CONF_MINIMUM_BRIGHTNESS: (0.0, 100.0),
         CONF_SATURATION: (0.0, 150.0),
         CONF_THRESHOLD: (0.0, 100.0),
+        CONF_BLACK_THRESHOLD: (MIN_BLACK_THRESHOLD, MAX_BLACK_THRESHOLD),
         CONF_TRANSITION: (0.0, 2.0),
         CONF_BLACK_HOLD: (0.0, 1000.0),
-        CONF_FADE_TO_BLACK: (0.0, 5.0),
+        CONF_FADE_TO_BLACK: (0.0, 10.0),
+        CONF_OFF_DELAY: (0.0, 10.0),
+        CONF_SCENE_CUT_THRESHOLD: (0.0, 100.0),
+        CONF_SCENE_CUT_TRANSITION: (0.0, 2.0),
         CONF_CORNER_INFLUENCE: (0.0, 100.0),
     }
     for key, (minimum, maximum) in ranges.items():
@@ -182,7 +227,6 @@ def normalize_sources(raw: Any) -> list[dict[str, Any]]:
     if not isinstance(raw, list):
         raw = []
 
-    # Merge duplicate zones to make hand-edited configurations harmless.
     weights: dict[str, float] = {}
     for item in raw:
         if not isinstance(item, dict):
@@ -201,8 +245,49 @@ def normalize_sources(raw: Any) -> list[dict[str, Any]]:
     return [{"zone": zone, "weight": weight} for zone, weight in weights.items()]
 
 
+def normalize_position_mode(raw: Any) -> str:
+    mode = str(raw or DEFAULT_POSITION_MODE)
+    return mode if mode in POSITION_MODES else DEFAULT_POSITION_MODE
+
+
+def normalize_position(value: Any, default: float = 0.0) -> float:
+    return max(-100.0, min(100.0, _float(value, default)))
+
+
+def spatial_sources(x: float, y: float) -> list[dict[str, float]]:
+    """Convert X/Y placement into weighted Ambilight edge sources.
+
+    X/Y use -100..+100 with the TV center at 0/0. Edge weights follow the
+    direction from the center. A small center region blends in Whole screen so
+    a lamp placed close to the center does not arbitrarily prefer an edge.
+    """
+    x = normalize_position(x)
+    y = normalize_position(y)
+    weights: list[tuple[str, float]] = []
+
+    if x < 0:
+        weights.append((ZONE_LEFT, abs(x)))
+    elif x > 0:
+        weights.append((ZONE_RIGHT, abs(x)))
+
+    if y < 0:
+        weights.append((ZONE_TOP, abs(y)))
+    elif y > 0:
+        weights.append((ZONE_BOTTOM, abs(y)))
+
+    # Within roughly the central third of the coordinate plane, Whole screen
+    # gradually contributes. At 0/0 it is the only source.
+    center = max(0.0, 1.0 - max(abs(x), abs(y)) / 35.0) * 100.0
+    if center > 0:
+        weights.append((ZONE_ALL, center))
+
+    if not weights:
+        return [{"zone": ZONE_ALL, "weight": 100.0}]
+    return [{"zone": zone, "weight": weight} for zone, weight in weights if weight > 0]
+
+
 def normalize_lights(raw: Any, global_settings: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    """Normalize per-light mixer and override configuration."""
+    """Normalize per-light mapping, spatial placement and overrides."""
     if not isinstance(raw, dict):
         return {}
 
@@ -212,11 +297,22 @@ def normalize_lights(raw: Any, global_settings: dict[str, Any]) -> dict[str, dic
             continue
         if not isinstance(config, dict):
             config = {}
+
+        mode = normalize_position_mode(config.get(CONF_POSITION_MODE))
         sources = normalize_sources(config.get("sources"))
-        if not sources:
-            # A light without a source cannot produce a useful command.
+        # Existing v0.2.x entries have no position_mode and therefore normalize
+        # to Manual. Preserve their weighted sources byte-for-byte in meaning.
+        if mode == POSITION_MODE_MANUAL and not sources:
             continue
+        if mode == POSITION_MODE_SPATIAL and not sources:
+            # Keep a harmless Manual fallback if the user switches modes later.
+            sources = [{"zone": ZONE_ALL, "weight": 100.0}]
+
         result[entity_id] = {
+            CONF_POSITION_MODE: mode,
+            CONF_POSITION_X: normalize_position(config.get(CONF_POSITION_X), DEFAULT_POSITION_X),
+            CONF_POSITION_Y: normalize_position(config.get(CONF_POSITION_Y), DEFAULT_POSITION_Y),
+            CONF_POSITION_FALLOFF: max(MIN_POSITION_FALLOFF, min(MAX_POSITION_FALLOFF, _float(config.get(CONF_POSITION_FALLOFF), DEFAULT_POSITION_FALLOFF))),
             "sources": sources,
             "overrides": normalize_overrides(config.get("overrides"), global_settings),
         }
@@ -268,7 +364,6 @@ def legacy_profile_config(data: dict[str, Any], options: dict[str, Any]) -> dict
     global_settings = normalize_settings(options)
     lights: dict[str, dict[str, Any]] = {}
 
-    # Legacy UI allowed one zone per light. Preserve that assignment exactly.
     for zone, key in ZONE_CONFIG_KEYS.items():
         values = options.get(key, data.get(key, [])) or []
         if not isinstance(values, list):
@@ -276,6 +371,10 @@ def legacy_profile_config(data: dict[str, Any], options: dict[str, Any]) -> dict
         for entity_id in values:
             if isinstance(entity_id, str) and entity_id.startswith("light."):
                 lights[entity_id] = {
+                    CONF_POSITION_MODE: POSITION_MODE_MANUAL,
+                    CONF_POSITION_X: 0.0,
+                    CONF_POSITION_Y: 0.0,
+                    CONF_POSITION_FALLOFF: DEFAULT_POSITION_FALLOFF,
                     "sources": [{"zone": zone, "weight": 100.0}],
                     "overrides": {},
                 }
@@ -296,7 +395,7 @@ def legacy_profile_config(data: dict[str, Any], options: dict[str, Any]) -> dict
 
 
 def profile_config_from_entry(entry) -> dict[str, Any]:
-    """Load profile configuration, migrating legacy options in memory if needed."""
+    """Load profile configuration, migrating legacy/profile schemas in memory."""
     options = dict(entry.options)
     raw = options.get(CONF_PROFILE_CONFIG)
     if isinstance(raw, dict):

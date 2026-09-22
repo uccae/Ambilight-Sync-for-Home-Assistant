@@ -8,6 +8,7 @@ from typing import Any
 import probatio
 from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import entity_registry as er
 
 from .config_model import (
     CONF_PROFILE_CONFIG,
@@ -17,7 +18,7 @@ from .config_model import (
     profile_config_from_entry,
     resolve_preset,
 )
-from .const import DOMAIN, ZONE_CONFIG_KEYS
+from .const import CONF_POSITION_MODE, DOMAIN, POSITION_MODE_MANUAL, ZONE_CONFIG_KEYS
 from .manager import AmbilightSyncManager
 
 _FLAG = "_sidebar_websocket_registered"
@@ -30,6 +31,7 @@ def _status(hass: HomeAssistant, entry_id: str) -> dict[str, Any]:
             "running": False,
             "last_error": "Integration is not loaded",
             "previews": {},
+            "diagnostics": {},
         }
     return {
         "running": manager.is_running,
@@ -40,6 +42,7 @@ def _status(hass: HomeAssistant, entry_id: str) -> dict[str, Any]:
         "active_preset": manager.active_preset_id,
         "active_preset_name": manager.active_preset_name,
         "previews": manager.previews,
+        "diagnostics": manager.diagnostics,
     }
 
 
@@ -48,6 +51,8 @@ def _legacy_zones_from_profile(profile_config: dict[str, Any]) -> dict[str, list
     _, preset = active_preset(profile_config)
     result = {zone: [] for zone in ZONE_CONFIG_KEYS}
     for entity_id, config in dict(preset.get("lights", {})).items():
+        if config.get(CONF_POSITION_MODE, POSITION_MODE_MANUAL) != POSITION_MODE_MANUAL:
+            continue
         sources = list(config.get("sources", []))
         if len(sources) == 1 and sources[0].get("zone") in result:
             result[sources[0]["zone"]].append(entity_id)
@@ -91,6 +96,7 @@ def async_register_websocket(hass: HomeAssistant) -> None:
         return
     websocket_api.async_register_command(hass, ws_get_config)
     websocket_api.async_register_command(hass, ws_get_status)
+    websocket_api.async_register_command(hass, ws_set_running)
     websocket_api.async_register_command(hass, ws_save_profile_config)
     websocket_api.async_register_command(hass, ws_activate_preset)
     websocket_api.async_register_command(hass, ws_save_config_legacy)
@@ -132,6 +138,60 @@ def ws_get_status(
             msg["id"], websocket_api.const.ERR_NOT_FOUND, "Ambilight Sync entry not found"
         )
         return
+    connection.send_result(msg["id"], _status(hass, entry.entry_id))
+
+
+def _sync_switch_entity_id(hass: HomeAssistant, entry_id: str) -> str | None:
+    registry = er.async_get(hass)
+    for entity in registry.entities.values():
+        if (
+            entity.config_entry_id == entry_id
+            and entity.platform == DOMAIN
+            and entity.domain == "switch"
+        ):
+            return entity.entity_id
+    return None
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command(
+    {
+        probatio.Required("type"): "ambilight_sync/set_running",
+        probatio.Required("entry_id"): str,
+        probatio.Required("running"): bool,
+    }
+)
+@websocket_api.async_response
+async def ws_set_running(
+    hass: HomeAssistant,
+    connection: websocket_api.ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    entry = hass.config_entries.async_get_entry(msg["entry_id"])
+    if entry is None or entry.domain != DOMAIN:
+        connection.send_error(
+            msg["id"], websocket_api.const.ERR_NOT_FOUND, "Ambilight Sync entry not found"
+        )
+        return
+
+    manager: AmbilightSyncManager | None = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    if manager is None:
+        connection.send_error(
+            msg["id"], websocket_api.const.ERR_NOT_FOUND, "Ambilight Sync is not loaded"
+        )
+        return
+
+    switch_entity_id = _sync_switch_entity_id(hass, entry.entry_id)
+    if switch_entity_id is not None:
+        service = "turn_on" if msg["running"] else "turn_off"
+        await hass.services.async_call(
+            "switch", service, {"entity_id": switch_entity_id}, blocking=True
+        )
+    elif msg["running"]:
+        await manager.async_start()
+    else:
+        await manager.async_stop()
+
     connection.send_result(msg["id"], _status(hass, entry.entry_id))
 
 
