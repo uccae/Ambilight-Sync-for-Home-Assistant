@@ -18,13 +18,17 @@ No Hue Bridge, no Hue Sync Box, no screen capture, no cloud processing.
 - Multiple weighted Ambilight sources per light
 - Independent update rate for each light
 - Per-light overrides for brightness, saturation, transition, smoothing, thresholds and color processing
-- Live per-light color preview in the sidebar
+- Spatial light positioning with X/Y coordinates and per-light Zone Falloff / Spread
+- Spatial mode uses the TV's individual Ambilight pixels instead of averaging whole edges
+- Live Zone Spread visualization showing which Ambilight segments influence each Spatial light
+- Manual weighted zones remain available as an advanced/compatibility mode
+- Live per-light color preview and diagnostics in the sidebar
 - Restores previous light state when sync is stopped
 
 ### Presets
 
 - Create, duplicate, rename and delete custom presets
-- Each preset can store its own global settings, light mappings and per-light overrides
+- Each preset stores its own global settings, light mappings and per-light overrides
 - Switch presets from Home Assistant automations using `ambilight_sync.activate_preset`
 
 ### Color processing
@@ -33,9 +37,11 @@ No Hue Bridge, no Hue Sync Box, no screen capture, no cloud processing.
 - **Perceptual** — favors visually meaningful bright and saturated colors while reducing the influence of near-black segments
 - **Dominant** — groups similar hues and selects the strongest color group without allowing a single bright segment to dominate the entire zone
 - Adjustable brightness, saturation and change threshold
+- Rec.709 Black Threshold with hysteresis
 - Minimum brightness for dark scenes
-- Black hold to prevent flickering during short dark frames
-- Separate fade-to-black timing
+- Independent black delay, fade transition and switch-off delay
+- Scene-cut detection for immediate response to abrupt color changes
+- Scene cuts can interrupt the dark-scene cycle immediately
 
 ### Ambilight zones
 
@@ -47,16 +53,21 @@ No Hue Bridge, no Hue Sync Box, no screen capture, no cloud processing.
 - Extended side zones with configurable corner influence
 - Multiple zones can be mixed together with custom weights for a single light
 
-### Transitions and timing
+### Timing and diagnostics
 
 - Hardware transition support when available
 - Separate TV polling rate and per-light update rate
 - Software smoothing
-- Designed to support both slow ambient lights and high-frequency devices
+- Latest-frame-wins output handling to avoid stale command queues
+- Target, queued and actual light update rates
+- Replaced-frame counters and command latency
+- Separate TV/light error throttling
+- Warning when Philips `processed` Ambilight remains suspiciously black for an extended period
 
 ### Home Assistant
 
 - Dedicated sidebar configuration panel
+- Sync can be enabled or disabled directly from the sidebar
 - HomeKit-compatible `switch.ambilight_sync`
 - Preset switching from automations
 
@@ -83,7 +94,9 @@ Everything runs locally inside Home Assistant.
 
 ## Presets and per-light settings
 
-Each preset stores its own global settings, light assignments, source mixer and individual light overrides. A light can mix several Ambilight zones, for example:
+Each preset stores its own global settings, light assignments, source mixer and individual light overrides.
+
+A light can mix several Ambilight zones, for example:
 
 ```text
 Left   50%
@@ -92,7 +105,7 @@ Right  50%
 
 Only enabled overrides replace the preset global values. TV polling is global, while each light can override how often it receives commands. This lets the TV be sampled frequently without flooding slower bulbs.
 
-Presets can also be activated from Home Assistant automations with the `ambilight_sync.activate_preset` service:
+Presets can be activated from Home Assistant automations with:
 
 ```yaml
 action: ambilight_sync.activate_preset
@@ -100,65 +113,103 @@ data:
   preset: Movie
 ```
 
-## Zones
+## Spatial positioning
 
-Available zones:
+Each light can use either **Spatial** or **Manual** positioning.
 
-- Left
-- Right
-- Top
-- Bottom
-- Whole screen
-- Whole left side + corners
-- Whole right side + corners
-- Whole top side + corners
-- Whole bottom side + corners
+Spatial mode uses X/Y coordinates from `-100` to `+100` and weights the individual Ambilight pixels exposed by the TV according to their distance from the virtual light position.
 
-### Corner influence
+`Zone Falloff / Spread` controls how local or wide that sampling is:
 
-Controls how much the neighboring edge sections affect a composite side.
+- low values favor only the closest Ambilight segments
+- high values create a wider ambient mix
 
-For example, `Whole left side + corners` always uses the left edge at full weight, while the top-left and bottom-left areas are mixed in according to the configured percentage.
+The sidebar visualizes the actual segments and their relative influence, so X/Y and Zone Spread can be tuned visually.
 
-## Dark scene handling
+Existing configurations stay in **Manual** mode after upgrading and keep their current zones and weights unchanged.
+
+## Scene-cut response
+
+Scene-cut detection watches for abrupt color changes seen by each light.
+
+When a change exceeds the configured threshold, the new frame can bypass normal rate limiting, software smoothing and the standard change threshold, then use a dedicated short scene-cut transition.
+
+A scene cut also immediately interrupts an active dark-scene cycle, so a bright new scene does not wait for a pending fade or OFF timer.
+
+Set Scene-cut threshold to `0%` to disable detection.
+
+## Dark-scene handling
+
+The dark-scene cycle is intentionally split into separate stages:
+
+```text
+Black detected
+  → Black delay
+  → Fade transition to Minimum brightness (or 1%)
+  → if Minimum brightness = 0%: Off delay
+  → OFF
+```
+
+Any non-black frame cancels the cycle immediately and takes ownership of the light.
+
+### Black Threshold
+
+Uses Rec.709 luminance calculated from the raw Ambilight samples before Average / Perceptual / Dominant processing.
+
+At `0%`, only exact black is treated as black. At higher values, a small proportional hysteresis prevents rapid switching around the threshold.
+
+### Black delay
+
+Controls how long the Ambilight area must remain black before dimming begins. This filters short dark frames and cuts.
+
+### Fade transition
+
+Controls the hardware transition used for the single dimming command.
+
+The light fades to:
+
+- `Minimum brightness`, if it is above `0%`
+- `1%`, if Minimum brightness is `0%`
+
+The last RGB color is preserved during the fade.
 
 ### Minimum brightness
 
-Prevents lights from dropping below a configured brightness level.
+With a value above `0%`, black fades to that brightness floor and the light stays on.
 
-Set it to `0%` to keep the old behavior.
+At `0%`, black fades to `1%` and then proceeds to the switch-off delay.
 
-### Black hold
+### Off delay
 
-Waits briefly before reacting to a black or nearly black Ambilight zone.
+Used only when Minimum brightness is `0%`.
 
-This reduces flicker during cuts or very short dark frames.
+After the fade transition reaches `1%`, the light remains there for the configured delay before receiving the final `OFF` command.
 
-### Fade to black
-
-Controls how long the light takes to fade toward minimum brightness or off.
-
-This is separate from the normal color transition time.
+This is useful for bulbs that need a short low-brightness hold before switching off cleanly.
 
 ## Recommended starting point
 
-These settings are intentionally slow and smooth:
+A reasonable starting configuration for smooth ambient lighting:
 
 ```text
-TV polling rate:      1 Hz
-Light update rate:     1 Hz
-Hardware transition:  0.8 s
-Software smoothing:   0%
-Threshold:             20
+TV polling rate:       4 Hz
+Light update rate:      1–8 Hz
+Hardware transition:   0.5–0.8 s
+Software smoothing:    0%
+Change threshold:      12–20
 
-Color mode:            Perceptual
-Minimum brightness:    8%
-Black hold:             300 ms
-Fade to black:          1.0 s
-Corner influence:       35%
+Color mode:             Perceptual
+Black threshold:         1–4%
+Black delay:             0–300 ms
+Fade transition:         0.3–1.0 s
+Off delay:               0.5–2.0 s
+Minimum brightness:      0–8%
+Scene-cut threshold:    35%
+Scene-cut transition:   0.05 s
+Zone Spread:            40–50%
 ```
 
-Higher light update rates are not always better. Some smart bulbs become more delayed when they receive new RGB commands too frequently. If your TV handles it comfortably, you can raise TV polling to 2–4 Hz while keeping slower lights at 1 Hz so they receive fresher frames without receiving more commands.
+Higher light update rates are not always better. Some smart bulbs become more delayed when they receive RGB commands too frequently, while others without smooth hardware transitions may benefit from higher rates.
 
 ## Installation
 
@@ -187,17 +238,11 @@ Real-world behavior can vary significantly depending on the device, integration 
 | Device | Connection | Result | Notes |
 |---|---|---|---|
 | Govee M1 | Govee lights local | ✅ Good | Works well. High update rates are recommended because smooth hardware color transitions are not available. |
-| Govee M1 | Matter | ⚠️ Poor | Slow updates, noticeable lag, and no smooth color transition. Not recommended for Ambilight sync. |
+| Govee M1 | Matter | ⚠️ Poor | Slow updates, noticeable lag and no smooth color transition. Not recommended for Ambilight sync. |
 | Xiaomi Mi Bedside Lamp 2 | HomeKit | ✅ Excellent | Very responsive. Smooth color transitions work well. Tested up to 8 Hz without noticeable slowdown. |
 | Yandex GX53 | Matter | ✅ Good | Works well at low update rates with smooth transitions. Higher rates may introduce delay. |
 
-### Notes
-
-Different smart lights behave very differently under frequent RGB updates.
-
-Some devices perform best with low update rates and long hardware transitions, while others require high update rates because they do not support smooth transitions internally.
-
-For this reason, per-light update rate and transition settings are recommended.
+Different smart lights behave very differently under frequent RGB updates, which is why per-light update rates and overrides are available.
 
 ## HomeKit
 
@@ -225,7 +270,7 @@ Please remove credentials, tokens and other private information before posting l
 
 The integration should work with any RGB-capable Home Assistant `light.*` entity.
 
-Test results may vary depending on TV firmware, light firmware and how each light implements transitions.
+Actual behavior depends on TV firmware, light firmware, transport and how each light implements transitions.
 
 ## Project status
 
