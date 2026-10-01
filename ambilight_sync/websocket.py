@@ -5,7 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
-import probatio
+import voluptuous as vol
 from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
@@ -106,7 +106,7 @@ def async_register_websocket(hass: HomeAssistant) -> None:
 @callback
 @websocket_api.require_admin
 @websocket_api.websocket_command(
-    {probatio.Required("type"): "ambilight_sync/get_config"}
+    {vol.Required("type"): "ambilight_sync/get_config"}
 )
 def ws_get_config(
     hass: HomeAssistant,
@@ -123,8 +123,8 @@ def ws_get_config(
 @websocket_api.require_admin
 @websocket_api.websocket_command(
     {
-        probatio.Required("type"): "ambilight_sync/get_status",
-        probatio.Required("entry_id"): str,
+        vol.Required("type"): "ambilight_sync/get_status",
+        vol.Required("entry_id"): str,
     }
 )
 def ws_get_status(
@@ -156,9 +156,9 @@ def _sync_switch_entity_id(hass: HomeAssistant, entry_id: str) -> str | None:
 @websocket_api.require_admin
 @websocket_api.websocket_command(
     {
-        probatio.Required("type"): "ambilight_sync/set_running",
-        probatio.Required("entry_id"): str,
-        probatio.Required("running"): bool,
+        vol.Required("type"): "ambilight_sync/set_running",
+        vol.Required("entry_id"): str,
+        vol.Required("running"): bool,
     }
 )
 @websocket_api.async_response
@@ -198,9 +198,9 @@ async def ws_set_running(
 @websocket_api.require_admin
 @websocket_api.websocket_command(
     {
-        probatio.Required("type"): "ambilight_sync/save_profile_config",
-        probatio.Required("entry_id"): str,
-        probatio.Required("profile_config"): dict,
+        vol.Required("type"): "ambilight_sync/save_profile_config",
+        vol.Required("entry_id"): str,
+        vol.Required("profile_config"): dict,
     }
 )
 @websocket_api.async_response
@@ -228,9 +228,9 @@ async def ws_save_profile_config(
 @websocket_api.require_admin
 @websocket_api.websocket_command(
     {
-        probatio.Required("type"): "ambilight_sync/activate_preset",
-        probatio.Required("entry_id"): str,
-        probatio.Required("preset"): str,
+        vol.Required("type"): "ambilight_sync/activate_preset",
+        vol.Required("entry_id"): str,
+        vol.Required("preset"): str,
     }
 )
 @websocket_api.async_response
@@ -264,10 +264,10 @@ async def ws_activate_preset(
 @websocket_api.require_admin
 @websocket_api.websocket_command(
     {
-        probatio.Required("type"): "ambilight_sync/save_config",
-        probatio.Required("entry_id"): str,
-        probatio.Required("zones"): dict,
-        probatio.Required("settings"): dict,
+        vol.Required("type"): "ambilight_sync/save_config",
+        vol.Required("entry_id"): str,
+        vol.Required("zones"): dict,
+        vol.Required("settings"): dict,
     }
 )
 @websocket_api.async_response
