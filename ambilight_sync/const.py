@@ -1,7 +1,7 @@
 """Constants for Ambilight Sync."""
 
 DOMAIN = "ambilight_sync"
-VERSION = "0.3.0"
+VERSION = "0.3.1"
 
 CONF_SYSTEM = "system"
 

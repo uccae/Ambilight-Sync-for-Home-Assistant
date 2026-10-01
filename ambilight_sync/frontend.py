@@ -5,8 +5,7 @@ from __future__ import annotations
 from hashlib import sha256
 from pathlib import Path
 
-from homeassistant.components import panel_custom
-from homeassistant.components.frontend import async_panel_exists
+from homeassistant.components import frontend, panel_custom
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.core import HomeAssistant
 
@@ -15,7 +14,7 @@ from .const import PANEL_COMPONENT, PANEL_STATIC_URL, PANEL_URL, VERSION
 
 async def async_register_frontend(hass: HomeAssistant) -> None:
     """Serve the bundled frontend and add the sidebar panel."""
-    if async_panel_exists(hass, PANEL_URL):
+    if PANEL_URL in hass.data.get(frontend.DATA_PANELS, {}):
         return
 
     frontend_dir = Path(__file__).parent / "frontend"
@@ -43,5 +42,4 @@ async def async_register_frontend(hass: HomeAssistant) -> None:
         sidebar_title="Ambilight Sync",
         sidebar_icon="mdi:television-ambient-light",
         require_admin=True,
-        handle_safe_area=True,
     )

@@ -1,7 +1,7 @@
 const TEXT = {
   ru: {
     title: "Ambilight Sync",
-    subtitle: "0.3.0",
+    subtitle: "0.3.1",
     tv: "Телевизор",
     running: "Синхронизация включена",
     stopped: "Синхронизация выключена",
@@ -116,7 +116,7 @@ const TEXT = {
   },
   en: {
     title: "Ambilight Sync",
-    subtitle: "0.3.0",
+    subtitle: "0.3.1",
     tv: "TV",
     running: "Sync is on",
     stopped: "Sync is off",
