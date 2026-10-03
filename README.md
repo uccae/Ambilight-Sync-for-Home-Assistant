@@ -4,7 +4,9 @@ Sync Philips TV Ambilight colors with any RGB-capable light available in Home As
 
 No Hue Bridge, no Hue Sync Box, no screen capture, no cloud processing.
 
-> **Note:** this is a vibe-coded community project. It works, it is useful, but it is still experimental software. Expect rough edges and please report bugs.
+<img width="853" height="480" alt="demo" src="https://github.com/user-attachments/assets/8b49939e-af2b-44f7-82ca-f0b9e86723e6" />
+
+> Demo: Philips Ambilight synchronized with a Xiaomi Bedside Lamp connected to Home Assistant using the HomeKit integration.
 
 ## Features
 
@@ -13,6 +15,7 @@ No Hue Bridge, no Hue Sync Box, no screen capture, no cloud processing.
 - Supports Matter, Zigbee, Philips Hue, Wi-Fi RGB lights and other compatible light integrations
 - Runs locally inside Home Assistant
 
+> **Note:** this is a vibe-coded community project. It works, it is useful, but it is still experimental software. Expect rough edges and please report bugs.
 ### Light configuration
 
 - Multiple weighted Ambilight sources per light
