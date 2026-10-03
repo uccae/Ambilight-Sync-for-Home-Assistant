@@ -67,6 +67,9 @@ No Hue Bridge, no Hue Sync Box, no screen capture, no cloud processing.
 ### Home Assistant
 
 - Dedicated sidebar configuration panel
+- Compact settings accordion with one section open at a time
+- Optional Debug panel opened with a separate button
+- Per-light preview and diagnostics collapsed by default
 - Sync can be enabled or disabled directly from the sidebar
 - HomeKit-compatible `switch.ambilight_sync`
 - Preset switching from automations
@@ -93,6 +96,14 @@ Home Assistant
 Everything runs locally inside Home Assistant.
 
 ## Presets and per-light settings
+
+### Intensity and dark-color stabilization (v0.4.0)
+
+Intensity supports **50–400%**, globally or as a per-light override. **100%** retains the previous brightness gain. Minimum and maximum brightness still limit the result; increasing intensity may have little effect when the output is already at either limit. Saturation adjusts color independently of output brightness.
+
+Weak color differences in very dark samples are suppressed before RGB normalization to reduce amplified tints. Bright and sufficiently saturated colors are retained. The Debug button exposes stabilization strength and RGB noise floor, plus the processing stages for one selected light. Suppression can also reduce genuine faint dark colors; adjust it to suit your TV and lights. Debug values apply only after Save, and the reset button only stages recommended values.
+
+Existing presets, manual mappings and per-light overrides are preserved. Debug shows desired output, not an optical measurement or confirmation of the light's physical color.
 
 Each preset stores its own global settings, light assignments, source mixer and individual light overrides.
 

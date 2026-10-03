@@ -465,6 +465,55 @@ def normalized_rgb(rgb: RGB) -> RGB:
     scale = 255.0 / peak
     return tuple(_clamp_channel(channel * scale) for channel in rgb)  # type: ignore[return-value]
 
+def stabilized_color(rgb: RGB, strength_percent: float = 100.0, noise_floor: float = 3.0) -> RGB:
+    """Suppress uncertain dark chroma before converting to full-scale light color.
+
+    Use source value and absolute chroma as confidence; sufficiently bright or
+    saturated signals remain unchanged. Round only after normalization so an
+    8-bit rounding error cannot reintroduce tint into a corrected dark sample.
+    """
+    peak = max(rgb)
+    if peak <= 0:
+        return (0, 0, 0)
+    strength = max(0.0, min(1.0, strength_percent / 100.0))
+    floor = max(0.0, noise_floor)
+    if strength <= 0 or floor <= 0:
+        return normalized_rgb(rgb)
+
+    def smoothstep(value: float) -> float:
+        t = max(0.0, min(1.0, value))
+        return t * t * (3.0 - 2.0 * t)
+
+    chroma = peak - min(rgb)
+    # A dark near-neutral sample such as (11, 11, 8) still amplifies a
+    # three-unit channel difference into a strong yellow tint. Do not treat
+    # value alone as trustworthy until it clears the quantization region.
+    # Absolute chroma remains an independent escape for saturated colors.
+    value_confidence = smoothstep((peak - 4.0 * floor) / (4.0 * floor))
+    chroma_confidence = smoothstep((chroma - floor) / floor)
+    confidence = max(value_confidence, chroma_confidence)
+    chroma_scale = 1.0 - strength * (1.0 - confidence)
+    return tuple(
+        _clamp_channel(255.0 * (1.0 - (peak - channel) / peak * chroma_scale))
+        for channel in rgb
+    )  # type: ignore[return-value]
+
+
+def output_brightness(rgb: RGB, intensity: float, maximum: float, minimum: float) -> int:
+    """Scale scene luma independently of chroma and clamp the physical output.
+
+    Preserve the existing maximum setting's scaling for old presets. Intensity
+    adds a multiplier; 100% keeps the legacy brightness curve.
+    """
+    maximum = max(10.0, min(100.0, maximum))
+    minimum = max(0.0, min(maximum, minimum))
+    value = 255.0 * rec709_luminance_percent(rgb) / 100.0
+    value *= maximum / 100.0 * intensity / 100.0
+    return max(1, min(round(255.0 * maximum / 100.0), max(
+        round(value), round(255.0 * minimum / 100.0)
+    )))
+
+
 def rec709_luminance_percent(rgb: RGB) -> float:
     """Return Rec.709 luma for an 8-bit RGB color as 0..100 percent."""
     r, g, b = (max(0.0, min(255.0, float(channel))) / 255.0 for channel in rgb)
@@ -476,4 +525,3 @@ def payload_is_all_zero(payload: Any) -> bool:
     zones = extract_zone_samples(payload, 0.0)
     samples = zones.get(ZONE_ALL, [])
     return bool(samples) and all(rgb == (0, 0, 0) for rgb, _ in samples)
-

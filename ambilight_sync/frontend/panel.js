@@ -1,7 +1,17 @@
 const TEXT = {
   ru: {
     title: "Ambilight Sync",
-    subtitle: "0.3.2",
+    subtitle: "0.4.0",
+    basics: "Основные", speed: "Скорость и плавность", spatialSettings: "Пространственное смешивание",
+    intensity: "Интенсивность", intensityDesc: "Усиление яркости до 4×: 100% сохраняет прежний уровень, 200% — вдвое, 400% — вчетверо. Минимум и максимум ограничивают результат: на этих границах изменение может быть незаметно. Цвет не меняется.",
+    processedDesc: "Рекомендуется. Обработанные Philips цвета, обычно более насыщенные и ближе к встроенному Ambilight.",
+    measuredDesc: "Более сырые цвета изображения, на некоторых телевизорах заметно бледнее. Меньшая задержка не гарантируется.",
+    spatialSettingsDesc: "Corner influence применяется к Manual-зонам с углами. X/Y, spread и Manual mapping настраиваются в группе «Позиционирование» каждого светильника.",
+    debug: "Debug · Алгоритмы и диагностика", debugHint: "Для диагностики тёмного цветового шума. Изменения применяются только после сохранения.",
+    neutralStrength: "Стабилизация тёмных цветов", neutralStrengthDesc: "Плавно подавляет слабый цветовой шум перед нормализацией RGB. 0% отключает; 100% — рекомендуемая сила. Уверенные насыщенные цвета сохраняются.",
+    neutralNoise: "Уровень шума RGB", neutralNoiseDesc: "Уровень 8-битного шума, по умолчанию 3. Чем больше, тем шире область стабилизации в тёмных кадрах. 0 отключает стабилизацию.",
+    debugReset: "Вернуть рекомендуемые значения", debugWaiting: "Диагностика появится после обновления backend и включения Sync.",
+    debugPipeline: "Этапы цветового вывода", info: "Подробнее", darkShort: "Выключение используется только при Minimum brightness = 0%.",
     tv: "Телевизор",
     running: "Синхронизация включена",
     stopped: "Синхронизация выключена",
@@ -26,8 +36,8 @@ const TEXT = {
     global: "Общие настройки пресета",
     globalHint: "Эти значения наследуют все светильники, пока для конкретного параметра не включён индивидуальный override.",
     source: "Источник цвета",
-    processed: "Processed · обработанный Ambilight",
-    measured: "Measured · измеренный Ambilight",
+    processed: "Processed — цвета Ambilight · рекомендуется",
+    measured: "Measured — цвета изображения",
     colorMode: "Алгоритм цвета",
     average: "Average · обычное усреднение",
     perceptual: "Perceptual · естественный ambient",
@@ -116,7 +126,17 @@ const TEXT = {
   },
   en: {
     title: "Ambilight Sync",
-    subtitle: "0.3.2",
+    subtitle: "0.4.0",
+    basics: "Basics", speed: "Speed & smoothing", spatialSettings: "Spatial mixing",
+    intensity: "Intensity", intensityDesc: "Brightness gain up to 4×: 100% keeps the previous level, 200% doubles it, 400% quadruples it. Minimum and maximum clamp the result, so changes at those limits may not be visible. Color is unchanged.",
+    processedDesc: "Recommended. Philips-processed colors, usually more saturated and closer to the TV's built-in Ambilight.",
+    measuredDesc: "Rawer image colors; these can look noticeably paler on some TVs. Lower latency is not guaranteed.",
+    spatialSettingsDesc: "Corner influence affects Manual corner zones. Set X/Y, spread and Manual mapping in each light's Positioning group.",
+    debug: "Debug · Algorithms & diagnostics", debugHint: "For diagnosing dark color noise. Changes take effect only after Save.",
+    neutralStrength: "Dark color stabilization", neutralStrengthDesc: "Smoothly suppresses uncertain chroma before RGB normalization. 0% disables; 100% is recommended. Confident saturated colors are retained.",
+    neutralNoise: "RGB noise floor", neutralNoiseDesc: "8-bit noise level, default 3. Higher values broaden stabilization in dark frames. 0 disables stabilization.",
+    debugReset: "Restore recommended values", debugWaiting: "Diagnostics appear after updating the backend and enabling Sync.",
+    debugPipeline: "Color output stages", info: "More information", darkShort: "Full switch-off is used only when Minimum brightness = 0%.",
     tv: "TV",
     running: "Sync is on",
     stopped: "Sync is off",
@@ -141,8 +161,8 @@ const TEXT = {
     global: "Preset global settings",
     globalHint: "Every light inherits these values until an individual override is enabled for that parameter.",
     source: "Color source",
-    processed: "Processed · TV processed Ambilight",
-    measured: "Measured · measured Ambilight",
+    processed: "Processed — Ambilight colors · recommended",
+    measured: "Measured — Screen colors",
     colorMode: "Color algorithm",
     average: "Average · direct averaging",
     perceptual: "Perceptual · natural ambient",
@@ -234,6 +254,7 @@ const TEXT = {
 const ZONES = ["left", "right", "top", "bottom", "all", "left_corners", "right_corners", "top_corners", "bottom_corners"];
 const OVERRIDES = ["color_mode", "update_rate", "transition", "smoothing", "brightness", "minimum_brightness", "saturation", "threshold", "black_threshold", "black_hold_ms", "fade_to_black", "off_delay", "scene_cut_threshold", "scene_cut_transition", "corner_influence"];
 const RANGE_META = {
+  intensity: [50, 400, 1, "percent"], neutral_strength: [0, 100, 5, "percent"], neutral_noise_floor: [0, 8, 0.25, ""],
   poll_rate: [0.25, 30, 0.25, "hz"], update_rate: [0.25, 30, 0.25, "hz"], transition: [0, 2, 0.1, "sec"], smoothing: [0, 95, 5, "percent"],
   brightness: [10, 100, 5, "percent"], minimum_brightness: [0, 100, 1, "percent"], saturation: [0, 150, 5, "percent"],
   threshold: [0, 100, 1, ""], black_threshold: [0, 20, 0.5, "percent"], black_hold_ms: [0, 1000, 50, "ms"], fade_to_black: [0, 10, 0.1, "sec"], off_delay: [0, 10, 0.1, "sec"], scene_cut_threshold: [0, 100, 1, "percent"], scene_cut_transition: [0, 2, 0.05, "sec"], corner_influence: [0, 100, 5, "percent"],
@@ -241,6 +262,9 @@ const RANGE_META = {
 
 const esc = (value) => String(value ?? "").replace(/[&<>'"]/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[c]));
 const clone = (value) => JSON.parse(JSON.stringify(value));
+const GLOBAL_RANGES = Object.keys(RANGE_META);
+OVERRIDES.push("intensity");
+const NEW_DEFAULTS = {intensity: 100, neutral_strength: 100, neutral_noise_floor: 3};
 
 class AmbilightSyncPanel extends HTMLElement {
   constructor() {
@@ -256,6 +280,8 @@ class AmbilightSyncPanel extends HTMLElement {
     this._saving = false;
     this._toggling = false;
     this._statusTimer = null;
+    this._openSettings = "basics";
+    this._debugVisible = false;
   }
 
   set hass(value) {
@@ -316,7 +342,7 @@ class AmbilightSyncPanel extends HTMLElement {
     return id;
   }
 
-  _globalValue(key) { return this.currentPreset?.global?.[key]; }
+  _globalValue(key) { return this.currentPreset?.global?.[key] ?? NEW_DEFAULTS[key]; }
   _overrideValue(entityId, key) {
     const overrides = this.currentPreset?.lights?.[entityId]?.overrides || {};
     return Object.prototype.hasOwnProperty.call(overrides, key) ? overrides[key] : this._globalValue(key);
@@ -325,7 +351,61 @@ class AmbilightSyncPanel extends HTMLElement {
   _range(id, label, value, extra = "") {
     const [min,max,step,unitKey] = RANGE_META[id];
     const unit = unitKey ? this.t[unitKey] : "";
-    return `<label class="control range-control"><span class="control-title">${esc(label)}</span><div class="range-row"><input id="${esc(id)}" type="range" min="${min}" max="${max}" step="${step}" value="${esc(value)}"><output id="${esc(id)}_out">${esc(value)}${unit ? ` ${esc(unit)}` : ""}</output></div>${extra}</label>`;
+    const help = extra ? this._info(`${id}_help`, extra.replace(/<[^>]*>/g, "")) : "";
+    return `<div class="control range-control"><div class="control-heading"><label class="control-title" for="${esc(id)}">${esc(label)}</label>${help}</div><div class="range-row"><input id="${esc(id)}" type="range" min="${min}" max="${max}" step="${step}" value="${esc(value)}"><output id="${esc(id)}_out" for="${esc(id)}">${esc(value)}${unit ? ` ${esc(unit)}` : ""}</output></div></div>`;
+  }
+
+  _info(id, text) {
+    return `<details class="info-tip"><summary aria-label="${esc(this.t.info)}">ⓘ</summary><div id="${esc(id)}" class="info-content" role="note">${text}</div></details>`;
+  }
+
+  _settingsSummary(section, settings = this.currentPreset?.global || {}) {
+    const v = (key) => this.shadowRoot?.getElementById(key)?.value ?? settings[key] ?? NEW_DEFAULTS[key];
+    switch (section) {
+      case "basics": return `${v("source") === "measured" ? "Measured" : "Processed"} · ${v("color_mode")} · ${this.t.intensity} ${v("intensity")}% · ${this.t.saturation} ${v("saturation")}%`;
+      case "speed": return `TV ${v("poll_rate")} Hz · Lamps ${v("update_rate")} Hz · ${this.t.smoothing} ${v("smoothing")}%`;
+      case "dark": return `Threshold ${v("black_threshold")}% · Min ${v("minimum_brightness")}% · Off ${v("off_delay")} s`;
+      case "cuts": return `${v("scene_cut_threshold")}% · ${v("scene_cut_transition")} s`;
+      case "spatial": return `${this.t.cornerInfluence} ${v("corner_influence")}%`;
+      default: return "";
+    }
+  }
+
+  _updateSettingsSummaries() {
+    this.shadowRoot.querySelectorAll("[data-settings-summary]").forEach((el) => {
+      el.textContent = this._settingsSummary(el.dataset.settingsSummary);
+    });
+  }
+
+  _setSettingsSection(section) {
+    this._openSettings = this._openSettings === section ? null : section;
+    this.shadowRoot.querySelectorAll("[data-settings-toggle]").forEach((button) => {
+      const open = button.dataset.settingsToggle === this._openSettings;
+      button.setAttribute("aria-expanded", String(open));
+      this.shadowRoot.getElementById(button.getAttribute("aria-controls")).hidden = !open;
+    });
+  }
+
+  _settingsMarkup(g) {
+    const t = this.t;
+    const range = (key, label, help = "") => this._range(key, label, g[key] ?? NEW_DEFAULTS[key], help ? esc(help) : "");
+    const section = (id, title, content) => `<div class="settings-section"><button type="button" class="settings-toggle" data-settings-toggle="${id}" aria-expanded="${this._openSettings === id}" aria-controls="settings-${id}"><span><strong>${esc(title)}</strong><small data-settings-summary="${id}">${esc(this._settingsSummary(id, g))}</small></span><span class="chevron" aria-hidden="true">›</span></button><div id="settings-${id}" class="section-controls" ${this._openSettings === id ? "" : "hidden"}>${content}</div></div>`;
+    const source = `<div class="control"><div class="control-heading"><label for="source" class="control-title">${esc(t.source)}</label>${this._info("source_help", esc(g.source === "measured" ? t.measuredDesc : t.processedDesc))}</div><select id="source"><option value="processed" ${g.source !== "measured" ? "selected" : ""}>${esc(t.processed)}</option><option value="measured" ${g.source === "measured" ? "selected" : ""}>${esc(t.measured)}</option></select></div>`;
+    const mode = g.color_mode || "average";
+    const algorithm = `<div class="control"><div class="control-heading"><label for="color_mode" class="control-title">${esc(t.colorMode)}</label>${this._info("color_mode_help", esc(t[`${mode}Desc`]))}</div><select id="color_mode">${["average", "perceptual", "dominant"].map((key) => `<option value="${key}" ${mode === key ? "selected" : ""}>${esc(t[key])}</option>`).join("")}</select></div>`;
+    return `<section class="card settings-accordion">
+      ${section("basics", t.basics, source + algorithm + range("intensity", t.intensity, t.intensityDesc) + range("saturation", t.saturation) + range("minimum_brightness", t.minBrightness) + range("brightness", t.brightness))}
+      ${section("speed", t.speed, range("poll_rate", t.pollRate, t.pollRateDesc) + range("update_rate", t.fps, t.fpsDesc) + range("transition", t.transition) + range("smoothing", t.smoothing) + range("threshold", t.threshold))}
+      ${section("dark", t.darkScenes, `<p class="section-note">${esc(t.darkShort)}</p>` + range("black_threshold", t.blackThreshold, t.blackThresholdDesc) + range("black_hold_ms", t.blackHold, t.blackHoldDesc) + range("fade_to_black", t.fadeBlack, t.fadeBlackDesc) + range("off_delay", t.offDelay, t.offDelayDesc))}
+      ${section("cuts", t.sceneCuts, range("scene_cut_threshold", t.sceneCutThreshold, t.sceneCutThresholdDesc) + range("scene_cut_transition", t.sceneCutTransition, t.sceneCutTransitionDesc))}
+      ${section("spatial", t.spatialSettings, range("corner_influence", t.cornerInfluence) + `<p class="section-note">${esc(t.spatialSettingsDesc)}</p>`)}
+    </section>
+    <button id="debug-toggle" class="secondary" type="button" aria-expanded="${this._debugVisible}" aria-controls="debug-settings">Debug</button>
+    <section id="debug-settings" class="debug-settings card" ${this._debugVisible ? "" : "hidden"}><strong>${esc(t.debug)}</strong><p>${esc(t.debugHint)}</p><div class="section-controls">
+      ${range("neutral_strength", t.neutralStrength, t.neutralStrengthDesc)}${range("neutral_noise_floor", t.neutralNoise, t.neutralNoiseDesc)}
+      <button id="debug-reset" class="secondary" type="button">${esc(t.debugReset)}</button>
+      <div class="debug-pipeline"><strong>${esc(t.debugPipeline)}</strong><select id="debug-light" aria-label="${esc(t.diagnostics)}">${Object.keys(this.currentPreset?.lights || {}).map((id) => `<option value="${esc(id)}" ${this._debugLight === id ? "selected" : ""}>${esc(this._lightName(id))}</option>`).join("")}</select><pre id="debug-pipeline">${esc(t.debugWaiting)}</pre></div>
+    </div></section>`;
   }
 
   _overrideRange(entityId, key, label) {
@@ -437,11 +517,13 @@ class AmbilightSyncPanel extends HTMLElement {
     const top = Math.max(0, Math.min(100, (posY + 100) / 2));
 
     return `<section class="light-card" data-light-card data-entity="${esc(entityId)}">
-      <div class="light-head"><div class="preview-dot" data-preview="${esc(entityId)}" style="background:rgb(${rgb.join(",")})"></div><div class="light-name"><strong>${esc(this._lightName(entityId))}</strong><small>${esc(entityId)}</small></div><button class="remove-light" data-remove-light="${esc(entityId)}">${esc(t.removeLight)}</button></div>
+      <div class="light-head"><div class="preview-dot" data-preview="${esc(entityId)}" style="background:rgb(${rgb.join(",")})"></div><div class="light-name"><strong>${esc(this._lightName(entityId))}</strong></div><button class="remove-light" data-remove-light="${esc(entityId)}">${esc(t.removeLight)}</button></div>
+      <details class="light-diagnostics"><summary>${esc(t.diagnostics)}</summary><small>${esc(entityId)}</small>
       <div class="preview-line"><span>${esc(t.preview)}</span><span data-preview-text="${esc(entityId)}">${esc(previewText)}</span></div>
       <div class="diagnostic-line"><span>${esc(t.diagnostics)}</span><span data-diagnostics-text="${esc(entityId)}">${esc(diagText)}</span></div>
+      </details>
 
-      <div class="subhead"><strong>${esc(t.positioning)}</strong></div>
+      <details class="position-settings"><summary>${esc(t.positioning)}</summary>
       <label class="control position-mode-control"><span class="control-title">${esc(t.positionMode)}</span><select data-position-mode><option value="spatial" ${positionMode === "spatial" ? "selected" : ""}>${esc(t.spatial)}</option><option value="manual" ${positionMode === "manual" ? "selected" : ""}>${esc(t.manual)}</option></select><small class="help" data-position-help>${esc(positionMode === "spatial" ? t.spatialDesc : t.manualDesc)}</small></label>
 
       <div class="spatial-box" data-spatial-config ${positionMode === "spatial" ? "" : "hidden"}>
@@ -458,11 +540,13 @@ class AmbilightSyncPanel extends HTMLElement {
         <button class="secondary add-source" data-add-source="${esc(entityId)}">${esc(t.addSource)}</button>
       </div>
 
+      </details>
       <details class="override-box"><summary>${esc(t.overrides)}${overrideCount ? ` · ${overrideCount}` : ""}</summary><p>${esc(t.overridesHint)}</p><div class="override-grid">
         ${this._overrideColorMode(entityId)}
         ${this._overrideRange(entityId, "update_rate", t.fps)}
         ${this._overrideRange(entityId, "transition", t.transition)}
         ${this._overrideRange(entityId, "smoothing", t.smoothing)}
+        ${this._overrideRange(entityId, "intensity", t.intensity)}
         ${this._overrideRange(entityId, "brightness", t.brightness)}
         ${this._overrideRange(entityId, "minimum_brightness", t.minBrightness)}
         ${this._overrideRange(entityId, "saturation", t.saturation)}
@@ -485,7 +569,7 @@ class AmbilightSyncPanel extends HTMLElement {
     const g = preset.global;
     g.source = root.getElementById("source").value;
     g.color_mode = root.getElementById("color_mode").value;
-    ["poll_rate","update_rate","transition","smoothing","brightness","minimum_brightness","saturation","threshold","black_threshold","black_hold_ms","fade_to_black","off_delay","scene_cut_threshold","scene_cut_transition","corner_influence"].forEach((key) => { g[key] = Number(root.getElementById(key).value); });
+    GLOBAL_RANGES.forEach((key) => { g[key] = Number(root.getElementById(key).value); });
     g.restore_on_stop = root.getElementById("restore_on_stop").checked;
 
     root.querySelectorAll("[data-light-card]").forEach((card) => {
@@ -641,6 +725,20 @@ class AmbilightSyncPanel extends HTMLElement {
 
   _updatePreviewDom(previews) {
     if (this.profile?.active_preset !== this._editPresetId) return;
+    const debug = this.shadowRoot?.getElementById("debug-pipeline");
+    const selectedDebugLight = this.shadowRoot?.getElementById("debug-light")?.value;
+    if (debug) debug.textContent = Object.entries(previews).filter(([id]) => id === selectedDebugLight).map(([id, p]) => {
+      const rgb = (key) => p[key] ? `(${p[key].join(", ")})` : "—";
+      const samples = (p.spatial_map || []).filter((s) => s.active).slice(0, 6).map((s) => s.rgb.join(",")).join(" | ");
+      const raw = `${this._lightName(id)} · ${p.state || "active"}\nRAW luma ${p.luminance ?? "—"}% · samples ${samples || "—"}`;
+      if (p.state && p.state !== "active") {
+        const note = (this._hass?.language || "").startsWith("ru")
+          ? "Black-cycle: обычный цветовой pipeline пропущен. Последний желаемый выход (не текущий цвет входа и не измерение лампы)"
+          : "Black-cycle: normal color pipeline skipped. Last desired output (not current input color or measured light state)";
+        return `${raw}\n${note}: RGB ${rgb("output_rgb")} · ${p.brightness ?? "—"}/255`;
+      }
+      return `${raw}\nAlgorithm ${rgb("input_rgb")} → smooth ${rgb("smoothed_rgb")}\nNeutral ${rgb("neutral_rgb")} → saturation / desired RGB ${rgb("output_rgb")}\nSource luma ${p.source_luminance ?? "—"}% · intensity ${p.intensity ?? "—"}% → brightness ${p.brightness ?? "—"}/255`;
+    }).join("\n\n") || this.t.debugWaiting;
     for (const [entityId, preview] of Object.entries(previews)) {
       const dot = [...(this.shadowRoot?.querySelectorAll("[data-preview]") || [])].find((el) => el.dataset.preview === entityId);
       const text = [...(this.shadowRoot?.querySelectorAll("[data-preview-text]") || [])].find((el) => el.dataset.previewText === entityId);
@@ -716,6 +814,27 @@ class AmbilightSyncPanel extends HTMLElement {
 
   _wireEvents() {
     const root = this.shadowRoot;
+    root.getElementById("debug-toggle")?.addEventListener("click", () => {
+      this._debugVisible = !this._debugVisible;
+      root.getElementById("debug-settings").hidden = !this._debugVisible;
+      root.getElementById("debug-toggle").setAttribute("aria-expanded", String(this._debugVisible));
+    });
+    root.getElementById("debug-light")?.addEventListener("change", (event) => {
+      this._debugLight = event.target.value;
+      this._updatePreviewDom(this._lastStatus?.previews || {});
+    });
+    root.querySelectorAll("[data-settings-toggle]").forEach((button) => button.addEventListener("click", () => this._setSettingsSection(button.dataset.settingsToggle)));
+    root.getElementById("source")?.addEventListener("change", () => {
+      root.getElementById("source_help").textContent = this.t[root.getElementById("source").value === "measured" ? "measuredDesc" : "processedDesc"];
+      this._updateSettingsSummaries();
+    });
+    root.getElementById("debug-reset")?.addEventListener("click", () => {
+      for (const key of ["neutral_strength", "neutral_noise_floor"]) {
+        const input = root.getElementById(key);
+        input.value = NEW_DEFAULTS[key];
+        this._updateRangeOutput(input);
+      }
+    });
     root.getElementById("entry-select")?.addEventListener("change", (e) => {
       this._readCurrentPresetControls();
       this._entryId = e.target.value;
@@ -735,18 +854,21 @@ class AmbilightSyncPanel extends HTMLElement {
     root.getElementById("save")?.addEventListener("click", () => this._save(false));
     root.getElementById("add-light")?.addEventListener("change", (e) => { const id=e.target.value; if(id) this._addLight(id); });
 
-    ["poll_rate","update_rate","transition","smoothing","brightness","minimum_brightness","saturation","threshold","black_threshold","black_hold_ms","fade_to_black","off_delay","scene_cut_threshold","scene_cut_transition","corner_influence"].forEach((key) => {
+    GLOBAL_RANGES.forEach((key) => {
       const input = root.getElementById(key);
       input?.addEventListener("input", () => {
         this._updateRangeOutput(input);
         this._syncInheritedOverrideValues(key);
         if (key === "minimum_brightness") this._syncDarkSceneUi();
+        this._updateSettingsSummaries();
       });
     });
     this._syncDarkSceneUi();
+    this._updateSettingsSummaries();
     root.getElementById("color_mode")?.addEventListener("change", () => {
       const select=root.getElementById("color_mode"); const help=root.getElementById("color_mode_help"); if(help) help.textContent=this.t[`${select.value}Desc`] || "";
       this._syncInheritedOverrideValues("color_mode");
+      this._updateSettingsSummaries();
     });
 
     root.querySelectorAll("[data-position-mode]").forEach((select) => select.addEventListener("change", () => {
@@ -826,32 +948,12 @@ class AmbilightSyncPanel extends HTMLElement {
       <section class="card preset-card"><label class="preset-select-wrap"><span>${esc(t.preset)}</span><div class="preset-select-line"><select id="preset-select">${presetOptions}</select><span id="active-preset-badge" class="active-badge" ${isActive ? "" : "hidden"}>${esc(t.active)}</span></div></label><div class="preset-actions"><button id="create-preset" class="secondary">${esc(t.create)}</button><button id="duplicate-preset" class="secondary">${esc(t.duplicate)}</button><button id="rename-preset" class="secondary">${esc(t.rename)}</button><button id="delete-preset" class="secondary danger">${esc(t.delete)}</button><button id="activate-preset" class="secondary accent" ${isActive ? "disabled" : ""}>${esc(t.activate)}</button></div></section>
 
       <div class="section-title"><div><h2>${esc(t.global)}</h2><p>${esc(t.globalHint)}</p></div></div>
-      <section class="card settings-grid">
-        <label class="control"><span class="control-title">${esc(t.source)}</span><select id="source"><option value="processed" ${g.source === "processed" ? "selected" : ""}>${esc(t.processed)}</option><option value="measured" ${g.source === "measured" ? "selected" : ""}>${esc(t.measured)}</option></select></label>
-        <label class="control"><span class="control-title">${esc(t.colorMode)}</span><select id="color_mode"><option value="average" ${colorMode === "average" ? "selected" : ""}>${esc(t.average)}</option><option value="perceptual" ${colorMode === "perceptual" ? "selected" : ""}>${esc(t.perceptual)}</option><option value="dominant" ${colorMode === "dominant" ? "selected" : ""}>${esc(t.dominant)}</option></select><small id="color_mode_help" class="help">${esc(t[`${colorMode}Desc`] || "")}</small></label>
-        ${this._range("poll_rate", t.pollRate, g.poll_rate, `<small class="help">${esc(t.pollRateDesc)}</small>`)}${this._range("update_rate", t.fps, g.update_rate, `<small class="help">${esc(t.fpsDesc)}</small>`)}${this._range("transition", t.transition, g.transition)}${this._range("smoothing", t.smoothing, g.smoothing)}${this._range("brightness", t.brightness, g.brightness)}${this._range("saturation", t.saturation, g.saturation)}${this._range("threshold", t.threshold, g.threshold)}${this._range("corner_influence", t.cornerInfluence, g.corner_influence)}
-        <div class="settings-subgroup dark-settings">
-          <div class="subgroup-title"><strong>${esc(t.darkScenes)}</strong><small>${esc(t.darkScenesHint)}</small></div>
-          <div class="subgroup-grid">
-            ${this._range("black_threshold", t.blackThreshold, g.black_threshold, `<small class="help">${esc(t.blackThresholdDesc)}</small>`)}
-            ${this._range("black_hold_ms", t.blackHold, g.black_hold_ms, `<small class="help">${esc(t.blackHoldDesc)}</small>`)}
-            ${this._range("fade_to_black", t.fadeBlack, g.fade_to_black, `<small class="help">${esc(t.fadeBlackDesc)}</small>`)}
-            ${this._range("off_delay", t.offDelay, g.off_delay, `<small class="help">${esc(t.offDelayDesc)}</small>`)}
-            ${this._range("minimum_brightness", t.minBrightness, g.minimum_brightness)}
-          </div>
-        </div>
-        <div class="settings-subgroup scene-cut-settings">
-          <div class="subgroup-title"><strong>${esc(t.sceneCuts)}</strong><small>${esc(t.sceneCutsHint)}</small></div>
-          <div class="subgroup-grid">
-            ${this._range("scene_cut_threshold", t.sceneCutThreshold, g.scene_cut_threshold, `<small class="help">${esc(t.sceneCutThresholdDesc)}</small>`)}
-            ${this._range("scene_cut_transition", t.sceneCutTransition, g.scene_cut_transition, `<small class="help">${esc(t.sceneCutTransitionDesc)}</small>`)}
-          </div>
-        </div>
-        <label class="check-row"><input id="restore_on_stop" type="checkbox" ${g.restore_on_stop !== false ? "checked" : ""}><span>${esc(t.restore)}</span></label>
-      </section>
+      ${this._settingsMarkup(g)}
 
       <div class="section-title lights-title"><div><h2>${esc(t.lights)}</h2><p>${esc(t.lightsHint)}</p></div><select id="add-light"><option value="">${esc(t.addLight)}</option>${availableLights}</select></div>
       <div class="lights-grid">${lightCards || `<div class="empty-state">${esc(t.noLights)}</div>`}</div>
+
+      <label class="check-row restore-control"><input id="restore_on_stop" type="checkbox" ${g.restore_on_stop !== false ? "checked" : ""}><span>${esc(t.restore)}</span></label>
 
       <div class="actions"><span class="save-hint">${esc(t.saveHint)}</span><button id="save" class="primary">${esc(t.save)}</button></div>
     </main>`;
@@ -859,7 +961,9 @@ class AmbilightSyncPanel extends HTMLElement {
   }
 
   _css() { return `
-    :host{display:block;min-height:100%;background:var(--primary-background-color);color:var(--primary-text-color);font-family:var(--paper-font-body1_-_font-family,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif)}*{box-sizing:border-box}
+    :host{display:block;container-type:inline-size;min-height:100%;background:var(--primary-background-color);color:var(--primary-text-color);font-family:var(--paper-font-body1_-_font-family,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif)}*{box-sizing:border-box}[hidden]{display:none!important}
+    #debug-toggle{margin-top:12px;font-size:12px}.debug-pipeline select{display:block;margin-top:10px;width:100%}.light-diagnostics{margin:14px 0;color:var(--secondary-text-color);font-size:12px}.light-diagnostics>summary{cursor:pointer}.light-diagnostics>small{display:block;margin-top:10px;overflow-wrap:anywhere}
+    .settings-accordion{overflow:visible}.settings-section+.settings-section{border-top:1px solid var(--divider-color)}.settings-toggle{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;padding:14px 18px;background:transparent;border:0;color:inherit;text-align:left;border-radius:14px}.settings-toggle:hover{background:color-mix(in srgb,var(--primary-color) 5%,transparent)}.settings-toggle strong{display:block;font-size:15px}.settings-toggle small{display:block;margin-top:4px;font-size:12px;line-height:1.4;color:var(--secondary-text-color);overflow-wrap:anywhere}.chevron{font-size:25px;color:var(--secondary-text-color);transition:transform .15s}.settings-toggle[aria-expanded=true] .chevron{transform:rotate(90deg)}.section-controls{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px 24px;padding:4px 18px 18px}.section-note{font-size:12px;grid-column:1/-1;line-height:1.45}.control-heading{display:flex;align-items:center;justify-content:space-between;gap:8px}.control{min-width:0}.control-title{overflow-wrap:anywhere}.control select{width:100%;min-width:0}.restore-control{margin:18px 2px}.debug-settings{padding:14px 18px;margin-top:14px}.debug-settings>summary,.position-settings>summary{cursor:pointer;font-weight:650;font-size:14px}.debug-settings>p{font-size:12px;margin:10px 0}.debug-settings .section-controls{padding:8px 0}.debug-pipeline{grid-column:1/-1;min-width:0;font-size:12px}.debug-pipeline pre{font:12px/1.6 ui-monospace,monospace;white-space:pre-wrap;overflow-wrap:anywhere;margin:10px 0 0}.position-settings>summary{margin:4px 0 12px}.position-settings[open]{margin-bottom:10px}.info-tip{position:relative;flex:none;font-size:14px;color:var(--secondary-text-color)}.info-tip>summary{cursor:pointer;list-style:none;width:28px;height:28px;display:grid;place-items:center;border-radius:50%}.info-tip>summary::-webkit-details-marker{display:none}.info-content{display:none;position:absolute;right:0;top:30px;width:min(270px,72vw);padding:12px;border:1px solid var(--divider-color);border-radius:10px;background:var(--card-background-color);color:var(--primary-text-color);box-shadow:0 6px 22px #0004;z-index:12;font-size:12px;line-height:1.5;text-transform:none;letter-spacing:normal;font-weight:400}.info-tip[open]>.info-content,.info-tip:hover>.info-content{display:block}.range-row{min-width:0}.range-row input{min-width:0}.topbar>*{min-width:0}.top-diagnostics strong{white-space:normal!important}.preview-line,.diagnostic-line{overflow-wrap:anywhere}.settings-toggle:focus-visible,.info-tip summary:focus-visible{outline:2px solid var(--primary-color);outline-offset:2px}
     main{max-width:1180px;margin:0 auto;padding:26px 24px 78px}header{display:flex;align-items:center;gap:14px;margin-bottom:18px}.logo{width:44px;height:44px;border-radius:13px;display:grid;place-items:center;background:var(--primary-color);color:#fff;font-size:22px;font-weight:800;flex:none}.head-copy{flex:1}h1{font-size:29px;line-height:1.08;margin:1px 0 4px}h2{font-size:21px;margin:0}p{margin:0;color:var(--secondary-text-color);line-height:1.45}.status-error{margin:10px 2px 0;padding:9px 12px;border-radius:10px;background:color-mix(in srgb,var(--error-color,#db4437) 10%,transparent);font-size:12px;color:var(--error-color,#db4437)}
     .card,.light-card{background:var(--card-background-color);border:1px solid var(--divider-color);border-radius:16px;box-shadow:var(--ha-card-box-shadow,none)}.topbar{padding:16px 18px;display:grid;grid-template-columns:minmax(240px,330px) minmax(330px,1fr) auto;gap:20px;align-items:center}.topbar label,.control,.preset-select-wrap{display:flex;flex-direction:column;gap:7px}.topbar label>span,.control-title,.preset-select-wrap>span,.eyebrow{font-size:11px;font-weight:750;color:var(--secondary-text-color);text-transform:uppercase;letter-spacing:.055em}.sync-control{display:flex;align-items:center;justify-content:space-between;gap:18px;padding-left:18px;border-left:1px solid var(--divider-color)}.sync-copy{display:flex;flex-direction:column;gap:4px;min-width:0}.sync-copy small{font-size:11px;line-height:1.35;color:var(--secondary-text-color);max-width:430px}.sync-status{font-size:14px}.sync-status.on{color:var(--success-color,#43a047)}.sync-toggle{min-width:102px;border:1px solid var(--primary-color);border-radius:11px;padding:10px 14px;background:transparent;color:var(--primary-color);font-weight:750}.sync-toggle.on{border-color:var(--error-color,#db4437);color:var(--error-color,#db4437)}.sync-toggle:disabled{opacity:.55;cursor:default}.top-diagnostics{display:flex;flex-direction:column;gap:5px;align-items:flex-end;text-align:right;padding-left:18px;border-left:1px solid var(--divider-color)}.top-diagnostics strong{font-size:12px;font-weight:650;white-space:nowrap;color:var(--secondary-text-color)}
     select,input,button{font:inherit}select,input[type=number]{border:1px solid var(--divider-color);border-radius:10px;padding:10px 11px;background:var(--secondary-background-color);color:var(--primary-text-color);outline:none}select:focus,input[type=number]:focus{border-color:var(--primary-color)}button{cursor:pointer}.section-title{display:flex;justify-content:space-between;gap:20px;align-items:end;margin:26px 2px 11px}.section-title p{margin-top:5px;font-size:13px;max-width:900px}.lights-title select{width:min(320px,42vw)}
@@ -870,6 +974,9 @@ class AmbilightSyncPanel extends HTMLElement {
     .actions{position:sticky;bottom:0;margin-top:22px;padding:11px 12px;display:flex;align-items:center;justify-content:space-between;gap:20px;border-top:1px solid var(--divider-color);background:color-mix(in srgb,var(--primary-background-color) 92%,transparent);backdrop-filter:blur(10px);z-index:4}.save-hint{font-size:11px;color:var(--secondary-text-color)}button.primary{border:0;border-radius:12px;padding:12px 24px;background:var(--primary-color);color:var(--text-primary-color,#fff);font-weight:800;min-width:160px;box-shadow:0 5px 18px rgba(0,0,0,.12)}button.primary:disabled{opacity:.65;cursor:default}.save-error{background:var(--error-color,#db4437)!important;max-width:520px}.loading,.empty-state,.error-card{padding:32px;border-radius:16px;background:var(--card-background-color);border:1px solid var(--divider-color);color:var(--secondary-text-color)}.error-card{color:var(--error-color,#db4437)}
     @media(max-width:1000px){.topbar{grid-template-columns:minmax(230px,1fr) minmax(320px,1.4fr)}.top-diagnostics{grid-column:1/-1;align-items:flex-start;text-align:left;border-left:0;border-top:1px solid var(--divider-color);padding:11px 0 0}.lights-grid{grid-template-columns:1fr}.preset-card{grid-template-columns:1fr}.preset-actions{justify-content:flex-start}}
     @media(max-width:760px){main{padding:18px 12px 68px}header{margin-bottom:15px}.topbar,.settings-grid,.subgroup-grid{grid-template-columns:1fr}.sync-control{padding:14px 0 0;border-left:0;border-top:1px solid var(--divider-color);align-items:flex-start}.sync-copy small{max-width:none}.top-diagnostics{grid-column:auto}.check-row{grid-column:auto}.section-title{align-items:stretch;flex-direction:column}.lights-title select{width:100%}.override-row{grid-template-columns:1fr}.source-row{grid-template-columns:1fr 88px 34px}h1{font-size:26px}.subgroup-title{align-items:flex-start;flex-direction:column;gap:5px}.subgroup-title small{text-align:left}.actions{padding-bottom:max(10px,env(safe-area-inset-bottom));margin-left:-12px;margin-right:-12px}.save-hint{display:none}}
+    @media(max-width:760px){.section-controls{grid-template-columns:1fr;gap:16px}.settings-toggle{padding:13px 14px}.section-controls{padding:4px 14px 16px}.topbar{grid-template-columns:minmax(0,1fr)!important}.preset-select-line select{min-width:0}.light-head{grid-template-columns:auto minmax(0,1fr)}.light-head .remove-light{grid-column:2;justify-self:start}.preview-line,.diagnostic-line{flex-direction:column;gap:4px}.preview-line span:last-child,.diagnostic-line span:last-child{text-align:left!important}.source-row{grid-template-columns:minmax(0,1fr) 68px 30px!important}.source-row select{min-width:0;width:100%}.range-row{grid-template-columns:minmax(0,1fr) 64px!important}}
+    @container(max-width:1000px){.topbar{grid-template-columns:minmax(0,1fr) minmax(0,1.4fr)}.top-diagnostics{grid-column:1/-1;align-items:flex-start;border-left:0;border-top:1px solid var(--divider-color);padding:10px 0 0;text-align:left}.lights-grid,.preset-card{grid-template-columns:1fr}.preset-actions{justify-content:flex-start}}
+    @container(max-width:760px){main{padding:18px 12px 68px}.section-controls{grid-template-columns:1fr;padding:4px 14px 16px}.topbar{grid-template-columns:minmax(0,1fr)!important}.sync-control{padding:14px 0 0;border-left:0;border-top:1px solid var(--divider-color)}.settings-toggle{padding:13px 14px}.section-title{align-items:stretch;flex-direction:column}.lights-title select{width:100%}.preset-select-line select{min-width:0}.override-row{grid-template-columns:1fr}.light-head{grid-template-columns:auto minmax(0,1fr)}.light-head .remove-light{grid-column:2;justify-self:start}.preview-line,.diagnostic-line{flex-direction:column;gap:4px}.preview-line span:last-child,.diagnostic-line span:last-child{text-align:left!important}.source-row{grid-template-columns:minmax(0,1fr) 68px 30px!important}.source-row select{min-width:0;width:100%}.range-row{grid-template-columns:minmax(0,1fr) 64px!important}.actions{margin-left:-12px;margin-right:-12px;padding-bottom:max(10px,env(safe-area-inset-bottom))}.save-hint{display:none}}
   `; }
 }
 

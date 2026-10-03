@@ -10,6 +10,9 @@ from .const import (
     CONF_BLACK_HOLD,
     CONF_BLACK_THRESHOLD,
     CONF_BRIGHTNESS,
+    CONF_INTENSITY,
+    CONF_NEUTRAL_STRENGTH,
+    CONF_NEUTRAL_NOISE_FLOOR,
     CONF_COLOR_MODE,
     CONF_CORNER_INFLUENCE,
     CONF_FADE_TO_BLACK,
@@ -32,6 +35,9 @@ from .const import (
     DEFAULT_BLACK_HOLD,
     DEFAULT_BLACK_THRESHOLD,
     DEFAULT_BRIGHTNESS,
+    DEFAULT_INTENSITY,
+    DEFAULT_NEUTRAL_STRENGTH,
+    DEFAULT_NEUTRAL_NOISE_FLOOR,
     DEFAULT_COLOR_MODE,
     DEFAULT_CORNER_INFLUENCE,
     DEFAULT_FADE_TO_BLACK,
@@ -70,7 +76,7 @@ from .const import (
     ZONES,
 )
 
-PROFILE_SCHEMA_VERSION = 5
+PROFILE_SCHEMA_VERSION = 6
 CONF_PROFILE_CONFIG = "profile_config"
 DEFAULT_PRESET_ID = "default"
 DEFAULT_PRESET_NAME = "Default"
@@ -81,6 +87,7 @@ OVERRIDABLE_SETTINGS = (
     CONF_SMOOTHING,
     CONF_BRIGHTNESS,
     CONF_MINIMUM_BRIGHTNESS,
+    CONF_INTENSITY,
     CONF_SATURATION,
     CONF_THRESHOLD,
     CONF_BLACK_THRESHOLD,
@@ -159,6 +166,9 @@ def normalize_settings(raw: Any) -> dict[str, Any]:
         CONF_UPDATE_RATE: update_rate,
         CONF_SMOOTHING: smoothing,
         CONF_BRIGHTNESS: brightness,
+        CONF_INTENSITY: max(50.0, min(400.0, _float(raw.get(CONF_INTENSITY), DEFAULT_INTENSITY))),
+        CONF_NEUTRAL_STRENGTH: max(0.0, min(100.0, _float(raw.get(CONF_NEUTRAL_STRENGTH), DEFAULT_NEUTRAL_STRENGTH))),
+        CONF_NEUTRAL_NOISE_FLOOR: max(0.0, min(8.0, _float(raw.get(CONF_NEUTRAL_NOISE_FLOOR), DEFAULT_NEUTRAL_NOISE_FLOOR))),
         CONF_MINIMUM_BRIGHTNESS: minimum_brightness,
         CONF_SATURATION: saturation,
         CONF_THRESHOLD: threshold,
@@ -189,6 +199,7 @@ def normalize_overrides(raw: Any, global_settings: dict[str, Any]) -> dict[str, 
         CONF_UPDATE_RATE: (MIN_UPDATE_RATE, MAX_UPDATE_RATE),
         CONF_SMOOTHING: (0.0, 95.0),
         CONF_BRIGHTNESS: (10.0, 100.0),
+        CONF_INTENSITY: (50.0, 400.0),
         CONF_MINIMUM_BRIGHTNESS: (0.0, 100.0),
         CONF_SATURATION: (0.0, 150.0),
         CONF_THRESHOLD: (0.0, 100.0),

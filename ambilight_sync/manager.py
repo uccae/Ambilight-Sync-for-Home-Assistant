@@ -35,7 +35,8 @@ from .color import (
     extract_spatial_samples,
     extract_spatial_weight_map,
     extract_zone_samples,
-    normalized_rgb,
+    stabilized_color,
+    output_brightness,
     payload_is_all_zero,
     rec709_luminance_percent,
     smooth_rgb,
@@ -50,6 +51,9 @@ from .const import (
     CONF_BLACK_HOLD,
     CONF_BLACK_THRESHOLD,
     CONF_BRIGHTNESS,
+    CONF_INTENSITY,
+    CONF_NEUTRAL_STRENGTH,
+    CONF_NEUTRAL_NOISE_FLOOR,
     CONF_COLOR_MODE,
     CONF_CORNER_INFLUENCE,
     CONF_FADE_TO_BLACK,
@@ -871,20 +875,31 @@ class AmbilightSyncManager:
                     self._smoothed.get(entity_id), selected, float(settings[CONF_SMOOTHING])
                 )
             self._smoothed[entity_id] = smoothed
-            adjusted = adjust_saturation(smoothed, float(settings[CONF_SATURATION]))
+            neutral_rgb = stabilized_color(
+                smoothed, float(settings[CONF_NEUTRAL_STRENGTH]),
+                float(settings[CONF_NEUTRAL_NOISE_FLOOR]),
+            )
+            # Raw samples already proved this frame is non-black. Averaging or
+            # smoothing can nevertheless round sub-unit RGB to zero; that has
+            # no reliable hue and must not send black RGB at the brightness floor.
+            if max(smoothed) == 0 and input_luminance > 0:
+                neutral_rgb = (255, 255, 255)
+            rgb = adjust_saturation(neutral_rgb, float(settings[CONF_SATURATION]))
 
             # Rec.709 luma controls light output; Minimum brightness is applied
             # afterwards and therefore never changes black classification.
-            output_luminance = rec709_luminance_percent(adjusted)
+            output_luminance = rec709_luminance_percent(smoothed)
             brightness_pct = float(settings[CONF_BRIGHTNESS])
-            raw_brightness = round(255.0 * (output_luminance / 100.0) * (brightness_pct / 100.0))
+            raw_brightness = round(255.0 * (output_luminance / 100.0) * (brightness_pct / 100.0) * float(settings[CONF_INTENSITY]) / 100.0)
             floor_percent = min(float(settings[CONF_MINIMUM_BRIGHTNESS]), brightness_pct)
-            floor_brightness = round(255 * floor_percent / 100.0)
-            brightness = max(1, min(255, max(raw_brightness, floor_brightness)))
-            rgb = normalized_rgb(adjusted)
+            brightness = output_brightness(smoothed, float(settings[CONF_INTENSITY]), brightness_pct, floor_percent)
             self._last_nonblack_rgb[entity_id] = rgb
             self._previews[entity_id] = {
                 "input_rgb": list(selected),
+                "smoothed_rgb": list(smoothed),
+                "neutral_rgb": list(neutral_rgb),
+                "source_luminance": round(output_luminance, 3),
+                "intensity": float(settings[CONF_INTENSITY]),
                 "output_rgb": list(rgb),
                 "brightness": brightness,
                 "luminance": round(input_luminance, 2),
