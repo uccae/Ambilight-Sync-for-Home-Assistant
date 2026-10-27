@@ -1,0 +1,11 @@
+activate_preset:
+  fields:
+    preset:
+      required: true
+      example: Movie
+      selector:
+        text:
+    entry_id:
+      required: false
+      selector:
+        text:

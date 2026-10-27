@@ -1,0 +1,5 @@
+Google Material Symbols Rounded: undo and redo
+https://github.com/google/material-design-icons
+Licensed under the Apache License, Version 2.0; see LICENSE.txt.
+
+The original SVG paths are preserved. These icons are embedded in panel.js, sized to 20 CSS pixels, colored with currentColor, and marked decorative for accessibility.

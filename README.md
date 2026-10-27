@@ -1,16 +1,44 @@
 # Ambilight Sync for Home Assistant
 
+## 0.5.0 — fixes
+
+Adds dismissible errors and an unselected state in the room editor, removes the requested help text, and turns off the virtual TV glow when synchronization stops. Selected lights use a steady accent with automatic cleanup. See [changes and verification](docs/FIXES_0_5_0_RU.md).
+
+## 0.5.0
+
+Release without the beta suffix. Uses bundled Google Material Symbols for room Undo/Redo. Preserves the Chromatic save surface, automatic preview, diagonal in inches and existing synchronization behavior. See [release notes and UI verification](docs/RELEASE_0_5_0_RU.md).
+
+## 0.5.0-beta.4 — UI polish
+
+Copies the shared save surface from the supplied Chromatic 0.1.1, removes the requested labels, and refreshes room previews automatically. Synchronization and preset schemas are preserved. See [changes, screenshots and verification](docs/UI_POLISH_RU.md).
+
+## 0.5.0-beta.3 — UI fixes
+
+Corrects menu sizing, shared disclosure styles, spacing, mobile fields and dialog controls. Adds screen diagonal in inches and the Chromatic-style Discard / Apply changes footer. Rendering and synchronization remain unchanged from beta.2. See [UI fixes, screenshots and verification](docs/UI_FIX_RU.md).
+
+## 0.5.0-beta.2 — refinement test build
+
+Adds per-light Identify and temporary manual control, shared room geometry, continuous preset handoffs, JSON backup/restore with a reviewed import plan, room Undo/Redo, and capability-aware Copy Settings. Classic and Ambient color algorithms, all four light characters, Philips polling and the room drawing are preserved. No Shadow Engine runs in this integration.
+
+See [test build, migration and validation](docs/REFINEMENT_RU.md). This is an unpublished test build in `codex/ambient-refinement`; stable sources and the original beta.1 ZIP remain unchanged.
+
+## Ambient 3D mode
+
+This build adds Ambient inside the existing integration. Classic remains the default. Place the TV and `light.*` entities with X/Y/Z coordinates in meters using linked front and top views. Depth affects spatial mixing and energy attenuation. Natural, Matte, Reflective and Atmospheric behaviors are available, with optional bounded Phosphor.
+
+Light behavior and settings belong to presets; physical geometry is shared. Draft preview uses a cached TV frame. Selecting a lamp separately sends a brief physical identification pulse. Save applies the selected mode through the existing manager and workers. Fixed polling, rate limiting, black handling and state restoration remain shared.
+
+See [Ambient 3D setup and validation](docs/AMBIENT_3D_RU.md). The release preserves the existing synchronization code; current verification covers the UI and installation archive. The earlier offline Studio is a separate research artifact. Motion is not enabled in this integration build.
+
 Sync Philips TV Ambilight colors with any RGB-capable light available in Home Assistant.
 
 No Hue Bridge, no Hue Sync Box, no screen capture, no cloud processing.
 
+<img width="853" height="480" alt="demo" src="https://github.com/user-attachments/assets/8b49939e-af2b-44f7-82ca-f0b9e86723e6" />
+
+> Demo: Philips Ambilight synchronized with a Xiaomi Bedside Lamp connected to Home Assistant using the HomeKit integration.
+
 > **Note:** this is a vibe-coded community project. It works, it is useful, but it is still experimental software. Expect rough edges and please report bugs.
-
-## What's new in 0.4.1
-
-The panel now shares Chromatic's visual language: soft cards, consistent controls, a live color preview with ambient glow, and a monochrome dark theme. Three tabs organize the interface: **Atmosphere**, **Lights**, and **Settings**. The TV preview preserves dark source colors and transitions smoothly between updates.
-
-This update changes the interface only. TV polling, color processing, command rates, presets, and saved settings retain their existing behavior. Restart Home Assistant and refresh the panel after replacing the integration files.
 
 ## Features
 
