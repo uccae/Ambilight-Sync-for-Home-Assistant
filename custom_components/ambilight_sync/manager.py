@@ -40,6 +40,7 @@ from .color import (
     extract_zone_samples,
     stabilized_color,
     output_brightness,
+    payload_has_samples,
     payload_is_all_zero,
     rec709_luminance_percent,
     smooth_rgb,
@@ -91,6 +92,10 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 _IDENTIFY_LEASE_SECONDS = 15.0
+_TV_RECOVER_AFTER_FAILURES = 3
+_TV_RECOVER_INTERVAL = 15.0
+_TV_CLOSE_TIMEOUT = 1.0
+_STUCK_DIAGNOSTIC_RETRY_SECONDS = 30.0
 
 
 @dataclass(slots=True)
@@ -136,14 +141,20 @@ class AmbilightSyncManager:
             .get("secured_transport")
             in (True, "true")
         )
-        self.tv = PhilipsTV(
-            host,
-            api_version=api_version,
-            secured_transport=secured_transport,
-            username=username,
-            password=password,
-            system=system,
-        )
+        # Retain constructor settings for a fresh connection after repeated
+        # failures. No broad PhilipsTV.update() sweep or private cache mutation.
+        self._tv_client_options = {
+            "host": host,
+            "api_version": api_version,
+            "secured_transport": secured_transport,
+            "username": username,
+            "password": password,
+            "system": system,
+        }
+        self.tv = self._create_tv_client()
+        self._tv_failures = 0
+        self._tv_reconnects = 0
+        self._tv_reconnect_at = 0.0
 
         self._profile_config = normalize_profile_config(profile_config)
         self.active_preset_id = ""
@@ -210,6 +221,7 @@ class AmbilightSyncManager:
         self._stuck_processed_black_since: float | None = None
         self._stuck_processed_warned = False
         self._stuck_diag_task: asyncio.Task[None] | None = None
+        self._stuck_diag_retry_at = 0.0
 
         self._tv_lock = asyncio.Lock()
         self._lifecycle_lock = asyncio.Lock()
@@ -326,6 +338,8 @@ class AmbilightSyncManager:
                     1,
                 ),
                 "processed_stuck_warning": bool(self._stuck_processed_warned),
+                "consecutive_poll_failures": self._tv_failures,
+                "client_reconnects": self._tv_reconnects,
             },
             "lights": lights,
             "rendering": {
@@ -578,6 +592,7 @@ class AmbilightSyncManager:
         self._light_available.clear()
         self._stuck_processed_black_since = None
         self._stuck_processed_warned = False
+        self._stuck_diag_retry_at = 0.0
         if clear_previews:
             self._previews.clear()
             self._tv_preview_payload = None
@@ -910,21 +925,51 @@ class AmbilightSyncManager:
             _LOGGER.warning("Ambilight TV/polling error: %s", exc)
         self._tv_last_error_log_at = now
 
+    def _create_tv_client(self) -> PhilipsTV:
+        """Use the same library, credentials and transport as the original client."""
+        return PhilipsTV(**self._tv_client_options)
+
+    async def _close_tv_client(self, tv: PhilipsTV) -> None:
+        """Bound cleanup so a failed old connection cannot stall recovery."""
+        try:
+            async with asyncio.timeout(_TV_CLOSE_TIMEOUT):
+                await tv.session.aclose()
+        except Exception as exc:
+            _LOGGER.debug("Philips client cleanup failed: %s", exc)
+
     async def _fetch_payload(self) -> Any:
-        # Diagnostic GETs are opportunistic. A normal frame always takes
-        # priority, so fixing the diagnostic cannot add a multi-request stall.
-        diagnostic = self._stuck_diag_task
-        if diagnostic is not None and not diagnostic.done():
-            diagnostic.cancel()
         async with self._tv_lock:
-            if self.source == SOURCE_MEASURED:
-                return await self.tv.getAmbilightMeasured()
-            return await self.tv.getAmbilightProcessed()
+            try:
+                if (
+                    self._tv_failures >= _TV_RECOVER_AFTER_FAILURES
+                    and monotonic() >= self._tv_reconnect_at
+                ):
+                    previous = self.tv
+                    self._tv_reconnect_at = monotonic() + _TV_RECOVER_INTERVAL
+                    # Swap before cleanup: cancellation still leaves a live
+                    # current client for Stop/Shutdown to own and close.
+                    self.tv = self._create_tv_client()
+                    self._tv_reconnects += 1
+                    await self._close_tv_client(previous)
+                if self.source == SOURCE_MEASURED:
+                    payload = await self.tv.getAmbilightMeasured()
+                else:
+                    payload = await self.tv.getAmbilightProcessed()
+                if not payload_has_samples(payload):
+                    raise GeneralFailure(
+                        f"Philips Ambilight {self.source} returned no valid color samples"
+                    )
+            except Exception:
+                self._tv_failures += 1
+                raise
+            self._tv_failures = 0
+            return payload
 
     def _update_stuck_processed_watch(self, payload: Any, now: float) -> None:
         if self.source != SOURCE_PROCESSED or not payload_is_all_zero(payload):
             self._stuck_processed_black_since = None
             self._stuck_processed_warned = False
+            self._stuck_diag_retry_at = 0.0
             return
 
         if self._stuck_processed_black_since is None:
@@ -934,9 +979,10 @@ class AmbilightSyncManager:
         if (
             not self._stuck_processed_warned
             and now - self._stuck_processed_black_since >= STUCK_PROCESSED_SECONDS
+            and now >= self._stuck_diag_retry_at
             and (self._stuck_diag_task is None or self._stuck_diag_task.done())
         ):
-            self._stuck_processed_warned = True
+            self._stuck_diag_retry_at = now + _STUCK_DIAGNOSTIC_RETRY_SECONDS
             self._stuck_diag_task = self.entry.async_create_background_task(
                 self.hass,
                 self._diagnose_stuck_processed(),
@@ -945,29 +991,34 @@ class AmbilightSyncManager:
 
     async def _diagnose_stuck_processed(self) -> None:
         """Confirm the known Philips all-zero processed state without changing output."""
+        diagnostic_tv = None
+        black_since = self._stuck_processed_black_since
         try:
-            async with asyncio.timeout(2.0), self._tv_lock:
-                get_req = getattr(self.tv, "getReq", None)
-                if get_req is None:
-                    _LOGGER.debug("Philips stuck-processed diagnostic unavailable: getReq missing")
-                    return
+            # A short-lived read client lets diagnostics finish without taking
+            # the normal poll lock or poisoning its dead-endpoint cache.
+            diagnostic_tv = self._create_tv_client()
+            async with asyncio.timeout(2.0):
+                get_req = diagnostic_tv.getReq
                 power = await get_req("ambilight/power")
                 current = await get_req("ambilight/currentconfiguration")
                 tv_active: bool | None = None
-                try:
-                    power_state = await get_req("powerstate")
-                    tv_active = str(power_state.get("powerstate", "")).lower() == "on"
-                except Exception:
+                for path in ("powerstate", "screenstate"):
                     try:
-                        screen = await get_req("screenstate")
-                        tv_active = str(screen.get("screenstate", "")).lower() == "on"
+                        state = await get_req(path)
                     except Exception:
-                        tv_active = None
+                        continue
+                    value = str(state.get(path, "")).lower() if isinstance(state, dict) else ""
+                    if value in ("on", "off", "standby"):
+                        tv_active = value == "on"
+                        break
 
-            ambilight_on = str((power or {}).get("power", "")).lower() == "on"
-            follow_video = str((current or {}).get("styleName", "")).upper() == "FOLLOW_VIDEO"
-            active_ok = tv_active is not False
-            if ambilight_on and follow_video and active_ok:
+            if self.source != SOURCE_PROCESSED or self._stuck_processed_black_since != black_since:
+                return
+
+            ambilight_on = isinstance(power, dict) and str(power.get("power", "")).lower() == "on"
+            follow_video = isinstance(current, dict) and str(current.get("styleName", "")).upper() == "FOLLOW_VIDEO"
+            if ambilight_on and follow_video and tv_active is True:
+                self._stuck_processed_warned = True
                 _LOGGER.warning(
                     "Philips Ambilight processed API has returned only 0,0,0 for %.0fs "
                     "while Ambilight is On and FOLLOW_VIDEO is active. The TV API may be "
@@ -976,15 +1027,18 @@ class AmbilightSyncManager:
                 )
             else:
                 _LOGGER.debug(
-                    "Long all-zero processed frame diagnosed as expected state: power=%s current=%s tv_active=%s",
-                    power,
-                    current,
+                    "Long all-zero processed frame: Ambilight on=%s Follow Video=%s TV active=%s; stuck state unconfirmed",
+                    ambilight_on,
+                    follow_video,
                     tv_active,
                 )
         except asyncio.CancelledError:
             raise
         except Exception as exc:
             _LOGGER.debug("Philips stuck-processed diagnostic failed: %s", exc)
+        finally:
+            if diagnostic_tv is not None:
+                await self._close_tv_client(diagnostic_tv)
 
     @staticmethod
     def _mix_rgb(colors: list[tuple[RGB, float]]) -> RGB | None:

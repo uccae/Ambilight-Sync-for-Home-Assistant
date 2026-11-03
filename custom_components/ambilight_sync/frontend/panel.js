@@ -1775,7 +1775,7 @@ class AmbilightSyncPanel extends HTMLElement {
   }
 
   _brandMarkup() {
-    return `<header><div class="brand"><div class="logo" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><rect x="3" y="4" width="18" height="13" rx="3" stroke="currentColor" stroke-width="1.6"/><path d="M8 21h8m-4-4v4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></div><div class="head-copy"><h1>${esc(this.t.title)}</h1></div></div><span class="version" aria-label="${esc(this.t.version)} 0.5.0">0.5.0</span></header>`;
+    return `<header><div class="brand"><div class="logo" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><rect x="3" y="4" width="18" height="13" rx="3" stroke="currentColor" stroke-width="1.6"/><path d="M8 21h8m-4-4v4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></div><div class="head-copy"><h1>${esc(this.t.title)}</h1></div></div><span class="version" aria-label="${esc(this.t.version)} 0.5.1">0.5.1</span></header>`;
   }
 
   _renderLoading() { this.shadowRoot.innerHTML = `<style>${this._css()}</style><main><div class="loading">Ambilight Sync…</div></main>`; }

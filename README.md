@@ -4,15 +4,23 @@ Sync Philips TV Ambilight colors with any RGB-capable light available in Home As
 
 No Hue Bridge, no Hue Sync Box, no screen capture, no cloud processing.
 
-> **Note:** this is a vibe-coded community project. Expect rough edges and please report bugs.
+> **Note:** this is a vibe-coded community project. It works, it is useful, but it is still experimental software. Expect rough edges and please report bugs.
+
+
+## What's new in 0.5.1
+
+Fixes TV recovery after missing Ambilight responses or repeated connection failures, and corrects stuck-API diagnostics when TV power is unknown. Polling frequency and light rendering are preserved. See [scope and validation](docs/TV_RECOVERY_FIXES_RU.md).
 
 ## What's new in 0.5.0
 
-- **Ambient** engine with X/Y/Z room positioning, TV rotation and a screen diagonal in inches. **Classic remains the default.**
-- Shared physical room geometry, temporary light participation and steady accent identification of selected lights.
-- JSON Backup & Restore with validation and a change preview.
+- Optional **Ambient** engine with X/Y/Z room positioning, TV rotation and a screen diagonal in inches. **Classic remains the default.**
+- Shared physical room geometry, room Undo/Redo, temporary light participation and steady accent identification of selected lights.
+- JSON Backup & Restore with validation and a change preview, plus capability-aware Copy Settings.
 - Improved preset handoffs, mobile spacing, menus and dialogs; Chromatic-style Discard / Apply changes controls.
+- Dismissible errors and correct shutdown of the virtual TV glow when synchronization stops.
 - Standard repository layout and validation workflow for HACS installation.
+
+See the [changelog](CHANGELOG.md) and [Ambient room guide](docs/AMBIENT.md). Existing pairings and presets are retained.
 
 ## Features
 
@@ -23,7 +31,7 @@ No Hue Bridge, no Hue Sync Box, no screen capture, no cloud processing.
 
 ### Light configuration
 
-- Ambient room mode with X/Y/Z coordinates and linked front/top views
+- Optional Ambient room mode with X/Y/Z coordinates and linked front/top views
 - Temporary participation switch for each light, independent of presets
 - Physical identification of the selected room light with a steady accent
 - Copy Settings with device capability checks
@@ -55,6 +63,16 @@ No Hue Bridge, no Hue Sync Box, no screen capture, no cloud processing.
 - Independent black delay, fade transition and switch-off delay
 - Scene-cut detection for immediate response to abrupt color changes
 - Scene cuts can interrupt the dark-scene cycle immediately
+
+### Ambilight zones
+
+- Left
+- Right
+- Top
+- Bottom
+- Whole screen
+- Extended side zones with configurable corner influence
+- Multiple zones can be mixed together with custom weights for a single light
 
 ### Timing and diagnostics
 
@@ -100,7 +118,7 @@ Everything runs locally inside Home Assistant.
 
 ## Presets and per-light settings
 
-### Intensity and dark-color stabilization
+### Intensity and dark-color stabilization (v0.4.0)
 
 Intensity supports **50–400%**, globally or as a per-light override. **100%** retains the previous brightness gain. Minimum and maximum brightness still limit the result; increasing intensity may have little effect when the output is already at either limit. Saturation adjusts color independently of output brightness.
 
@@ -206,7 +224,7 @@ This is useful for bulbs that need a short low-brightness hold before switching 
 A reasonable starting configuration for smooth ambient lighting:
 
 ```text
-TV polling rate:       15 Hz
+TV polling rate:       4 Hz
 Light update rate:      1–8 Hz
 Hardware transition:   0.5–0.8 s
 Software smoothing:    0%
@@ -231,7 +249,7 @@ Higher light update rates are not always better. Some smart bulbs become more de
 
 1. Open **HACS → menu (⋮) → Custom repositories**.
 2. Add `https://github.com/uccae/Ambilight-Sync-for-Home-Assistant` and choose **Integration** as the type.
-3. Find **Ambilight Sync for Home Assistant**, download **v0.5.0** or a later published release, and restart Home Assistant.
+3. Find **Ambilight Sync for Home Assistant**, download **v0.5.1** or a later published release, and restart Home Assistant.
 4. Go to **Settings → Devices & services → Add integration**, search for **Ambilight Sync**, and pair the Philips TV.
 5. Open **Ambilight Sync** from the sidebar to configure lights.
 
@@ -239,7 +257,7 @@ Higher light update rates are not always better. Some smart bulbs become more de
 
 ### Manual installation
 
-1. Download `ambilight_sync_v0.5.0.zip` from the [release page](https://github.com/uccae/Ambilight-Sync-for-Home-Assistant/releases).
+1. Download `ambilight_sync_v0.5.1.zip` from the [release page](https://github.com/uccae/Ambilight-Sync-for-Home-Assistant/releases).
 2. Extract it and copy `custom_components/ambilight_sync` to `/config/custom_components/ambilight_sync`.
 3. Restart Home Assistant, then add the integration under **Settings → Devices & services** and open its sidebar panel.
 
@@ -287,6 +305,14 @@ Please remove credentials, tokens and other private information before posting l
 The integration should work with any RGB-capable Home Assistant `light.*` entity.
 
 Actual behavior depends on TV firmware, light firmware, transport and how each light implements transitions.
+
+## Project status
+
+Version 0.5.1, released without a beta suffix.
+
+The priority is stable, pleasant ambient lighting rather than maximum FPS.
+
+Testing on different Philips TV models and different light platforms is welcome.
 
 ## License
 

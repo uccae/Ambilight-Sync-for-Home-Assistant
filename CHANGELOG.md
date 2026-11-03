@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.1
+
+- Recover the Philips client after repeated empty responses or connection failures.
+- Treat missing frames as errors, while accepting valid black frames.
+- Run bounded diagnostics independently of color polling and require confirmed TV power before warning.
+- Retry unconfirmed diagnostics without flooding and close diagnostic clients on cancellation.
+
 ## 0.5.0
 
 ### Added

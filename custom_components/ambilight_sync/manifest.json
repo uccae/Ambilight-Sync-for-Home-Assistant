@@ -22,5 +22,5 @@
   "requirements": [
     "ha-philipsjs==3.2.5"
   ],
-  "version": "0.5.0"
+  "version": "0.5.1"
 }

@@ -78,6 +78,19 @@ def _layer_from_payload(payload: Any) -> Mapping[str, Any] | None:
     return None
 
 
+def payload_has_samples(payload: Any) -> bool:
+    """Distinguish a missing/invalid frame from valid samples, including black."""
+    layer = _layer_from_payload(payload)
+    if layer is None:
+        return False
+    for name in (ZONE_TOP, ZONE_RIGHT, ZONE_BOTTOM, ZONE_LEFT):
+        side = layer.get(name)
+        if isinstance(side, Mapping):
+            if any(_pixel_rgb(pixel) is not None for pixel in side.values()):
+                return True
+    return False
+
+
 def extract_tv_preview(payload: Any) -> dict[str, list[list[int]]] | None:
     """Expose TV perimeter samples without applying any light color settings.
 
