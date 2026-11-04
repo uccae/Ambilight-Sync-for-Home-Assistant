@@ -6,22 +6,6 @@ No Hue Bridge, no Hue Sync Box, no screen capture, no cloud processing.
 
 > **Note:** this is a vibe-coded community project. It works, it is useful, but it is still experimental software. Expect rough edges and please report bugs.
 
-
-## What's new in 0.5.1
-
-Fixes TV recovery after missing Ambilight responses or repeated connection failures, and corrects stuck-API diagnostics when TV power is unknown. Polling frequency and light rendering are preserved. See [scope and validation](docs/TV_RECOVERY_FIXES_RU.md).
-
-## What's new in 0.5.0
-
-- Optional **Ambient** engine with X/Y/Z room positioning, TV rotation and a screen diagonal in inches. **Classic remains the default.**
-- Shared physical room geometry, room Undo/Redo, temporary light participation and steady accent identification of selected lights.
-- JSON Backup & Restore with validation and a change preview, plus capability-aware Copy Settings.
-- Improved preset handoffs, mobile spacing, menus and dialogs; Chromatic-style Discard / Apply changes controls.
-- Dismissible errors and correct shutdown of the virtual TV glow when synchronization stops.
-- Standard repository layout and validation workflow for HACS installation.
-
-See the [changelog](CHANGELOG.md) and [Ambient room guide](docs/AMBIENT.md). Existing pairings and presets are retained.
-
 ## Features
 
 - Reads Philips TV Ambilight colors through the jointSPACE API
