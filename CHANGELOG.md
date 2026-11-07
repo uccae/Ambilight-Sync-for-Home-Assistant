@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.2
+
+- Add opt-in inactivity handling: keep normal behavior, reduce polling, or stop Sync after continuous black frames.
+- Add independent restoration on inactivity stop and a native 0–5 s Restore transition (default 1.5 s).
+- Recover connection and changed TV IP through bounded SSDP discovery with device identity verification; preserve saved pairing data.
+- Support read-only HTTP on compatible TVs while retaining HTTPS pairing.
+- Show connection/last-response diagnostics and skip processing of completed black frames safely.
+
+Existing presets and room positions are preserved. Do nothing remains the default. Restart Home Assistant after updating.
+
+
 ## 0.5.1
 
 - Recover the Philips client after repeated empty responses or connection failures.

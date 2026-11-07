@@ -1,7 +1,7 @@
 """Constants for Ambilight Sync."""
 
 DOMAIN = "ambilight_sync"
-VERSION = "0.5.1"
+VERSION = "0.5.2"
 
 CONF_SYSTEM = "system"
 
@@ -39,6 +39,11 @@ CONF_SCENE_CUT_THRESHOLD = "scene_cut_threshold"
 CONF_SCENE_CUT_TRANSITION = "scene_cut_transition"
 CONF_CORNER_INFLUENCE = "corner_influence"
 CONF_RESTORE_ON_STOP = "restore_on_stop"
+CONF_INACTIVITY_MODE = "inactivity_mode"
+CONF_INACTIVITY_TIMEOUT = "inactivity_timeout"
+CONF_INACTIVE_POLL_RATE = "inactive_poll_rate"
+CONF_RESTORE_ON_INACTIVITY = "restore_on_inactivity_stop"
+CONF_RESTORE_TRANSITION = "restore_transition"
 
 CONF_POSITION_MODE = "position_mode"
 CONF_POSITION_X = "position_x"

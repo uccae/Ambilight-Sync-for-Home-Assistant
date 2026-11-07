@@ -68,9 +68,9 @@ def validate_profile(raw):
             raise ValueError("Unknown preset settings")
         def settings_types(settings):
             for k, v in settings.items():
-                if k == "restore_on_stop":
+                if k in ("restore_on_stop", "restore_on_inactivity_stop"):
                     valid = type(v) is bool
-                elif k in ("source", "color_mode"):
+                elif k in ("source", "color_mode", "inactivity_mode"):
                     valid = isinstance(v, str)
                 else:
                     valid = type(v) in (int, float)

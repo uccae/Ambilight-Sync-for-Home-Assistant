@@ -6,6 +6,13 @@ No Hue Bridge, no Hue Sync Box, no screen capture, no cloud processing.
 
 > **Note:** this is a vibe-coded community project. It works, it is useful, but it is still experimental software. Expect rough edges and please report bugs.
 
+## What's new in 0.5.2
+
+- Optional inactivity handling in Debug: Do nothing (default), Reduce polling rate, or Stop synchronization after continuous black frames.
+- Independent light restoration on inactivity stop, with a native Restore transition from 0 to 5 seconds (default 1.5 s).
+- Bounded SSDP recovery after connection loss, verified TV identity before saving a new IP, and read-only HTTP support alongside HTTPS pairing.
+- Connection diagnostics and reduced processing of already completed black frames.
+
 ## Features
 
 - Reads Philips TV Ambilight colors through the jointSPACE API
@@ -233,7 +240,7 @@ Higher light update rates are not always better. Some smart bulbs become more de
 
 1. Open **HACS → menu (⋮) → Custom repositories**.
 2. Add `https://github.com/uccae/Ambilight-Sync-for-Home-Assistant` and choose **Integration** as the type.
-3. Find **Ambilight Sync for Home Assistant**, download **v0.5.1** or a later published release, and restart Home Assistant.
+3. Find **Ambilight Sync for Home Assistant**, download **v0.5.2** or a later published release, and restart Home Assistant.
 4. Go to **Settings → Devices & services → Add integration**, search for **Ambilight Sync**, and pair the Philips TV.
 5. Open **Ambilight Sync** from the sidebar to configure lights.
 
@@ -241,7 +248,7 @@ Higher light update rates are not always better. Some smart bulbs become more de
 
 ### Manual installation
 
-1. Download `ambilight_sync_v0.5.1.zip` from the [release page](https://github.com/uccae/Ambilight-Sync-for-Home-Assistant/releases).
+1. Download `ambilight_sync_v0.5.2.zip` from the [release page](https://github.com/uccae/Ambilight-Sync-for-Home-Assistant/releases).
 2. Extract it and copy `custom_components/ambilight_sync` to `/config/custom_components/ambilight_sync`.
 3. Restart Home Assistant, then add the integration under **Settings → Devices & services** and open its sidebar panel.
 
@@ -292,7 +299,7 @@ Actual behavior depends on TV firmware, light firmware, transport and how each l
 
 ## Project status
 
-Version 0.5.1, released without a beta suffix.
+Version 0.5.2, released without a beta suffix.
 
 The priority is stable, pleasant ambient lighting rather than maximum FPS.
 
@@ -307,3 +314,21 @@ MIT License.
 This is an independent community project and is not affiliated with or endorsed by Philips, Signify, Matter, Apple or the Home Assistant project.
 
 Philips, Ambilight, Hue, HomeKit, Matter and Home Assistant are trademarks of their respective owners.
+
+## Start from a Home Assistant automation
+
+Inactivity stop does not automatically start Sync again. Use your actual TV/media-player and sync-switch entity IDs. This example needs a player which reports `playing`; use the appropriate state or playback sensor for your TV.
+
+```yaml
+# Replace both entity IDs with entities from your Home Assistant.
+alias: Start Ambilight when content starts
+triggers:
+  - trigger: state
+    entity_id: media_player.philips_tv
+    to: "playing"
+actions:
+  - action: switch.turn_on
+    target:
+      entity_id: switch.ambilight_sync
+mode: single
+```

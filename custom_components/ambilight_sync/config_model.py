@@ -5,6 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 from .ambient import normalize_rendering
+from .inactivity import MODES as INACTIVITY_MODES, bounded
 
 from .const import (
     COLOR_MODES,
@@ -25,6 +26,8 @@ from .const import (
     CONF_POSITION_Y,
     CONF_POSITION_FALLOFF,
     CONF_RESTORE_ON_STOP,
+    CONF_INACTIVITY_MODE, CONF_INACTIVITY_TIMEOUT, CONF_INACTIVE_POLL_RATE,
+    CONF_RESTORE_ON_INACTIVITY, CONF_RESTORE_TRANSITION,
     CONF_SCENE_CUT_THRESHOLD,
     CONF_SCENE_CUT_TRANSITION,
     CONF_SATURATION,
@@ -182,6 +185,11 @@ def normalize_settings(raw: Any) -> dict[str, Any]:
         CONF_SCENE_CUT_TRANSITION: scene_cut_transition,
         CONF_CORNER_INFLUENCE: corner_influence,
         CONF_RESTORE_ON_STOP: restore,
+        CONF_INACTIVITY_MODE: raw.get(CONF_INACTIVITY_MODE) if raw.get(CONF_INACTIVITY_MODE) in INACTIVITY_MODES else "none",
+        CONF_INACTIVITY_TIMEOUT: bounded(raw.get(CONF_INACTIVITY_TIMEOUT), 60.0, 1.0, 86400.0),
+        CONF_INACTIVE_POLL_RATE: min(poll_rate, bounded(raw.get(CONF_INACTIVE_POLL_RATE), 1.0, MIN_UPDATE_RATE, MAX_UPDATE_RATE)),
+        CONF_RESTORE_ON_INACTIVITY: bool(raw.get(CONF_RESTORE_ON_INACTIVITY, True)),
+        CONF_RESTORE_TRANSITION: bounded(raw.get(CONF_RESTORE_TRANSITION), 1.5, 0.0, 5.0),
     }
 
 

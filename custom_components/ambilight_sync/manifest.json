@@ -2,7 +2,8 @@
   "domain": "ambilight_sync",
   "name": "Ambilight Sync for Home Assistant",
   "after_dependencies": [
-    "panel_custom"
+    "panel_custom",
+    "ssdp"
   ],
   "codeowners": [
     "@uccae"
@@ -22,5 +23,5 @@
   "requirements": [
     "ha-philipsjs==3.2.5"
   ],
-  "version": "0.5.1"
+  "version": "0.5.2"
 }

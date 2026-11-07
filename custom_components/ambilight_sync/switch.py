@@ -5,6 +5,7 @@ from __future__ import annotations
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .const import DOMAIN
@@ -32,6 +33,12 @@ class AmbilightSyncSwitch(AmbilightSyncEntity, SwitchEntity):
     @property
     def is_on(self) -> bool:
         return self.manager.is_running
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        self.async_on_remove(async_dispatcher_connect(
+            self.hass, f"ambilight_sync_{self.entry.entry_id}_state", self.async_write_ha_state
+        ))
 
     @property
     def extra_state_attributes(self) -> dict[str, object]:

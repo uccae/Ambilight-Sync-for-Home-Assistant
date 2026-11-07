@@ -17,6 +17,7 @@ from homeassistant.const import (
 )
 
 from .const import CONF_SYSTEM, DOMAIN
+from .connection import COLOR_TRANSPORT, supports_http_colors
 
 APP_ID = "ambilight_sync"
 APP_NAME = "Home Assistant Ambilight Sync"
@@ -40,13 +41,24 @@ class AmbilightSyncConfigFlow(ConfigFlow, domain=DOMAIN):
         self._pair_state: Any = None
 
     async def _async_prepare(self, host: str, api_version: int) -> None:
+        self._current.pop(COLOR_TRANSPORT, None)
         if self._hub is not None:
             await self._hub.session.aclose()
             self._hub = None
         hub = PhilipsTV(host, api_version=api_version, secured_transport=False)
         self._hub = hub
         try:
-            await hub.getSystem()
+            try:
+                await hub.getSystem()
+            except GeneralFailure:
+                pass  # retry HTTPS with a fresh, unpoisoned system client below
+            if not hub.system:
+                # Some API 6 TVs expose /system only over HTTPS. A fresh client
+                # avoids the library's protocol-independent dead-path cache.
+                await hub.session.aclose()
+                hub = PhilipsTV(host, api_version=api_version, secured_transport=True)
+                self._hub = hub
+                await hub.getSystem()
             await hub.setTransport(hub.secured_transport, hub.api_version_detected)
             if not hub.system:
                 raise ConnectionFailure("TV returned no system data")
@@ -54,6 +66,8 @@ class AmbilightSyncConfigFlow(ConfigFlow, domain=DOMAIN):
             self._current[CONF_HOST] = host
             self._current[CONF_SYSTEM] = hub.system
             self._current[CONF_API_VERSION] = hub.api_version
+            if await supports_http_colors(host, hub.api_version, hub.system):
+                self._current[COLOR_TRANSPORT] = "http"
             name = hub.name or str(hub.system.get("name") or host)
             self.context.update({"title_placeholders": {"name": name}})
             serial = hub.system.get("serialnumber")
@@ -89,7 +103,7 @@ class AmbilightSyncConfigFlow(ConfigFlow, domain=DOMAIN):
                 errors["base"] = "cannot_connect"
             else:
                 assert self._hub is not None
-                if self._hub.pairing_type == "digest_auth_pairing":
+                if self._hub.pairing_type == "digest_auth_pairing" and self._current.get(COLOR_TRANSPORT) != "http":
                     return await self.async_step_pair()
                 return await self._async_finish()
 

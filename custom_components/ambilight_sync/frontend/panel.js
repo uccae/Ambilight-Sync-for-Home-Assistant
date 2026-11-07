@@ -272,6 +272,7 @@ const TEXT = {
 const ZONES = ["left", "right", "top", "bottom", "all", "left_corners", "right_corners", "top_corners", "bottom_corners"];
 const OVERRIDES = ["color_mode", "update_rate", "transition", "smoothing", "brightness", "minimum_brightness", "saturation", "threshold", "black_threshold", "black_hold_ms", "fade_to_black", "off_delay", "scene_cut_threshold", "scene_cut_transition", "corner_influence"];
 const RANGE_META = {
+  inactivity_timeout: [1, 86400, 1, "sec"], inactive_poll_rate: [0.25, 30, 0.25, "hz"], restore_transition: [0, 5, 0.1, "sec"],
   intensity: [50, 400, 1, "percent"], neutral_strength: [0, 100, 5, "percent"], neutral_noise_floor: [0, 8, 0.25, ""],
   poll_rate: [0.25, 30, 0.25, "hz"], update_rate: [0.25, 30, 0.25, "hz"], transition: [0, 2, 0.1, "sec"], smoothing: [0, 95, 5, "percent"],
   brightness: [10, 100, 5, "percent"], minimum_brightness: [0, 100, 1, "percent"], saturation: [0, 150, 5, "percent"],
@@ -288,7 +289,7 @@ const ROOM_TOOL_ICONS = {
 };
 const GLOBAL_RANGES = Object.keys(RANGE_META);
 OVERRIDES.push("intensity");
-const NEW_DEFAULTS = {intensity: 100, neutral_strength: 100, neutral_noise_floor: 3};
+const NEW_DEFAULTS = {intensity: 100, neutral_strength: 100, neutral_noise_floor: 3, inactivity_timeout: 60, inactive_poll_rate: 1, restore_transition: 1.5};
 
 class AmbilightSyncPanel extends HTMLElement {
   constructor() {
@@ -872,7 +873,7 @@ class AmbilightSyncPanel extends HTMLElement {
     const [min,max,step,unitKey] = RANGE_META[id];
     const unit = unitKey ? this.t[unitKey] : "";
     const help = extra ? this._info(`${id}_help`, extra.replace(/<[^>]*>/g, "")) : "";
-    return `<div class="control range-control"><div class="control-heading"><label class="control-title" for="${esc(id)}">${esc(label)}</label>${help}</div><div class="range-row"><input id="${esc(id)}" type="range" min="${min}" max="${max}" step="${step}" value="${esc(value)}"><output id="${esc(id)}_out" for="${esc(id)}">${esc(value)}${unit ? ` ${esc(unit)}` : ""}</output></div></div>`;
+    return `<div class="control range-control"><div class="control-heading"><label class="control-title" for="${esc(id)}">${esc(label)}</label>${help}</div><div class="range-row"><input id="${esc(id)}" type="${id==="inactivity_timeout"?"number":"range"}" min="${min}" max="${max}" step="${step}" value="${esc(value)}">${id==="inactivity_timeout"?`<span>${esc(unit)}</span>`:`<output id="${esc(id)}_out" for="${esc(id)}">${esc(value)}${unit ? ` ${esc(unit)}` : ""}</output>`}</div></div>`;
   }
 
   _info(id, text) {
@@ -906,6 +907,13 @@ class AmbilightSyncPanel extends HTMLElement {
     });
   }
 
+  _syncInactivityControls() {
+    const root=this.shadowRoot, mode=root.getElementById("inactivity_mode")?.value||"none";
+    for(const [id,show] of [["inactivity-timeout-control",mode!=="none"],["inactive-rate-control",mode==="reduce_polling"],["inactivity-restore-control",mode==="stop"]]){
+      const node=root.getElementById(id);if(node)node.hidden=!show;
+    }
+  }
+
   _settingsMarkup(g, basicsOnly = false) {
     const t = this.t;
     const range = (key, label, help = "") => this._range(key, label, g[key] ?? NEW_DEFAULTS[key], help ? esc(help) : "");
@@ -923,6 +931,13 @@ class AmbilightSyncPanel extends HTMLElement {
     <button id="debug-toggle" class="secondary" type="button" aria-expanded="${this._debugVisible}" aria-controls="debug-settings">Debug</button>
     <section id="debug-settings" class="debug-settings card" ${this._debugVisible ? "" : "hidden"}><strong>${esc(t.debug)}</strong><p>${esc(t.debugHint)}</p><div class="section-controls">
       ${range("neutral_strength", t.neutralStrength, t.neutralStrengthDesc)}${range("neutral_noise_floor", t.neutralNoise, t.neutralNoiseDesc)}
+      <div class="inactivity-settings"><h3>${esc(this._label("Бездействие", "Inactivity handling"))}</h3><div class="section-controls">
+        <div class="control"><label for="inactivity_mode" class="control-title">${esc(this._label("Действие", "Action"))}</label><select id="inactivity_mode">${[["none",this._label("Ничего не менять", "Do nothing")],["reduce_polling",this._label("Снизить частоту опроса", "Reduce polling rate")],["stop",this._label("Остановить синхронизацию", "Stop synchronization")]].map(([value,label])=>`<option value="${value}" ${(g.inactivity_mode||"none")===value?"selected":""}>${esc(label)}</option>`).join("")}</select></div>
+        <div id="inactivity-timeout-control" ${(g.inactivity_mode||"none")==="none"?"hidden":""}>${range("inactivity_timeout", this._label("Тайм-аут бездействия", "Inactivity timeout"))}</div>
+        <div id="inactive-rate-control" ${g.inactivity_mode!=="reduce_polling"?"hidden":""}>${range("inactive_poll_rate", this._label("Частота при бездействии", "Inactive polling rate"))}</div>
+        <label id="inactivity-restore-control" class="check-row" ${g.inactivity_mode!=="stop"?"hidden":""}><input id="restore_on_inactivity_stop" type="checkbox" ${g.restore_on_inactivity_stop!==false?"checked":""}><span>${esc(this._label("Восстанавливать лампы при автоостановке", "Restore lights on inactivity stop"))}</span></label>
+      </div><p class="help">${esc(this._label("Срабатывает только при непрерывном чёрном сигнале. Ошибки сети прерывают отсчёт. После автоостановки включайте Sync вручную или автоматизацией.", "Triggered only by continuous black frames. Network errors reset the timer. After an inactivity stop, start Sync manually or with an automation."))}</p></div>
+      <div class="connection-debug"><strong>${esc(this._label("Соединение с TV", "TV connection"))}</strong><pre id="connection-debug"></pre></div>
       <button id="debug-reset" class="secondary" type="button">${esc(t.debugReset)}</button>
       <div class="debug-pipeline"><strong>${esc(t.debugPipeline)}</strong><select id="debug-light" aria-label="${esc(t.diagnostics)}">${Object.keys(this.currentPreset?.lights || {}).map((id) => `<option value="${esc(id)}" ${this._debugLight === id ? "selected" : ""}>${esc(this._lightName(id))}</option>`).join("")}</select><pre id="debug-pipeline">${esc(t.debugWaiting)}</pre></div>
     </div></section>`;
@@ -1118,7 +1133,7 @@ class AmbilightSyncPanel extends HTMLElement {
     if (!preset || !this.shadowRoot?.getElementById("update_rate")) return;
     const root = this.shadowRoot;
     const g = preset.global;
-    for (const key of ["source", "color_mode"]) {
+    for (const key of ["source", "color_mode", "inactivity_mode"]) {
       const input = root.getElementById(key);
       if (input.dataset.edited) g[key] = input.value;
     }
@@ -1126,6 +1141,7 @@ class AmbilightSyncPanel extends HTMLElement {
       const input = root.getElementById(key);
       if (input.dataset.edited) g[key] = Number(input.value);
     });
+    if (root.getElementById("restore_on_inactivity_stop")?.dataset.edited) g.restore_on_inactivity_stop = root.getElementById("restore_on_inactivity_stop").checked;
     if (root.getElementById("restore_on_stop").dataset.edited) g.restore_on_stop = root.getElementById("restore_on_stop").checked;
 
     root.querySelectorAll("[data-light-card]").forEach((card) => {
@@ -1453,6 +1469,8 @@ class AmbilightSyncPanel extends HTMLElement {
   }
 
   _updateDiagnosticsDom(diagnostics) {
+    const connection=this.shadowRoot?.getElementById("connection-debug"), connectionTv=diagnostics.tv||{};
+    if(connection)connection.textContent=JSON.stringify({state:connectionTv.connection_state||"idle",host:connectionTv.host||"—",transport:connectionTv.color_transport||"—",last_successful_response:connectionTv.last_successful_response||"—",recovering:!!connectionTv.recovery_in_progress,effective_poll_rate_hz:connectionTv.effective_poll_rate_hz??connectionTv.target_poll_rate_hz,inactive:!!connectionTv.inactive,inactivity_seconds:Math.round(connectionTv.inactivity_seconds||0),last_stop_reason:connectionTv.last_stop_reason||"—"},null,2);
     const tv = diagnostics?.tv || {};
     const tvEl = this.shadowRoot?.getElementById("tv-diagnostics");
     if (tvEl) {
@@ -1598,6 +1616,7 @@ class AmbilightSyncPanel extends HTMLElement {
       if(message)this._dismissedErrors.set(this._entryId,message);
       root.getElementById("status-error").hidden=true;
     });
+    root.getElementById("inactivity_mode")?.addEventListener("change",()=>this._syncInactivityControls());
     root.getElementById("debug-toggle")?.addEventListener("click", () => {
       this._debugVisible = !this._debugVisible;
       root.getElementById("debug-settings").hidden = !this._debugVisible;
@@ -1775,7 +1794,7 @@ class AmbilightSyncPanel extends HTMLElement {
   }
 
   _brandMarkup() {
-    return `<header><div class="brand"><div class="logo" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><rect x="3" y="4" width="18" height="13" rx="3" stroke="currentColor" stroke-width="1.6"/><path d="M8 21h8m-4-4v4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></div><div class="head-copy"><h1>${esc(this.t.title)}</h1></div></div><span class="version" aria-label="${esc(this.t.version)} 0.5.1">0.5.1</span></header>`;
+    return `<header><div class="brand"><div class="logo" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><rect x="3" y="4" width="18" height="13" rx="3" stroke="currentColor" stroke-width="1.6"/><path d="M8 21h8m-4-4v4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></div><div class="head-copy"><h1>${esc(this.t.title)}</h1></div></div><span class="version" aria-label="${esc(this.t.version)} 0.5.2">0.5.2</span></header>`;
   }
 
   _renderLoading() { this.shadowRoot.innerHTML = `<style>${this._css()}</style><main><div class="loading">Ambilight Sync…</div></main>`; }
@@ -1835,7 +1854,7 @@ class AmbilightSyncPanel extends HTMLElement {
       <div id="panel-settings" role="tabpanel" aria-labelledby="nav-settings" data-tab-panel="settings" ${this._tab === "settings" ? "" : "hidden"}>
         <div class="section-title"><div><h2>${esc(t.settings)}</h2><p>${esc(t.globalHint)}</p></div></div>
         ${this._settingsMarkup(g)}
-        <section class="card behavior-card"><label class="check-row restore-control"><input id="restore_on_stop" type="checkbox" ${g.restore_on_stop !== false ? "checked" : ""}><span>${esc(t.restore)}</span></label><p>${esc(this._label("При остановке вернётся исходное состояние ламп. Светильники под ручным управлением не изменяются.","Stopping restores the lights’ original states. Lights under manual control are left as they are."))}</p></section>
+        <section class="card behavior-card"><label class="check-row restore-control"><input id="restore_on_stop" type="checkbox" ${g.restore_on_stop !== false ? "checked" : ""}><span>${esc(t.restore)}</span></label><p>${esc(this._label("При остановке вернётся исходное состояние ламп. Светильники под ручным управлением не изменяются.","Stopping restores the lights’ original states. Lights under manual control are left as they are."))}</p>${this._range("restore_transition",this._label("Плавность восстановления", "Restore transition"),g.restore_transition??1.5)}</section>
         <section class="card backup-card"><h2>${esc(this._label("Резервная копия","Backup & Restore"))}</h2><p class="help">${esc(this._label("Все пресеты, настройки, назначения ламп и общая комната. Пароли и данные подключения TV не входят в файл.","All presets, settings, light assignments and shared geometry. TV credentials and connection data are excluded."))}</p><div class="backup-actions"><button type="button" id="backup-export" class="secondary">${esc(this._label("Экспорт JSON","Export JSON"))}</button><button type="button" id="backup-import" class="secondary">${esc(this._label("Импорт JSON…","Import JSON…"))}</button><input id="backup-file" type="file" accept="application/json,.json" hidden></div><p id="backup-status" class="help" aria-live="polite"></p></section>
         <section class="card diagnostics-card"><div class="diagnostics-heading"><h2>${esc(t.diagnostics)}</h2><span class="eyebrow">${esc(t.tvDiagnostics)}</span></div><p id="tv-diagnostics">${esc(t.targetRate)} ${status?.diagnostics?.tv?.target_poll_rate_hz ?? g.poll_rate} Hz · ${esc(t.actualRate)} ${status?.diagnostics?.tv?.actual_poll_rate_hz ?? 0} Hz</p><p id="renderer-diagnostics">${esc(status?.diagnostics?.rendering?.active_mode || "classic")}</p><p>${esc(t.serviceHint)}</p></section>
       </div>
@@ -1923,6 +1942,7 @@ class AmbilightSyncPanel extends HTMLElement {
     .behavior-card{margin-top:20px}.behavior-card p,.diagnostics-card p{font-size:13px;margin:14px 0 0}.diagnostics-heading{display:flex;align-items:center;justify-content:space-between;gap:16px}.diagnostics-heading h2{margin:0}.eyebrow{color:var(--ui-muted);font-size:12px}
     .info-tip{position:relative;flex:none;color:var(--ui-muted)}.info-tip>summary{width:28px;min-height:28px;border-radius:50%;display:grid;place-items:center;font-size:16px;font-weight:400}.info-tip>summary:after{display:none}.info-tip>summary:hover{background:var(--ui-subtle)}
     .info-content{display:none;position:absolute;right:0;top:32px;width:min(280px,72vw);padding:16px;border:1px solid var(--ui-border);border-radius:14px;background:var(--ui-surface);color:var(--ui-text);box-shadow:var(--ui-float);z-index:12;font-size:13px;line-height:19px}.info-tip[open]>.info-content{display:block}
+    .inactivity-settings,.connection-debug{grid-column:1/-1;min-width:0}.inactivity-settings h3{font-size:15px;margin:16px 0}.inactivity-settings .control-title{display:block;margin-bottom:8px}.connection-debug pre{font:12px/1.6 ui-monospace,monospace;white-space:pre-wrap;overflow-wrap:anywhere;padding:16px;border-radius:14px;background:var(--ui-subtle)}
     #debug-toggle{margin-top:0;font-size:13px}.debug-settings{margin-top:20px}.debug-settings>strong{font-weight:600}.debug-settings>p{font-size:13px}.debug-settings .section-controls{padding-bottom:0}.debug-pipeline{grid-column:1/-1;min-width:0;font-size:13px}.debug-pipeline>strong{font-weight:500}.debug-pipeline select{margin-top:12px}.debug-pipeline pre{font:12px/1.6 ui-monospace,monospace;white-space:pre-wrap;overflow-wrap:anywhere;padding:16px;border-radius:14px;background:var(--ui-subtle)}
     .actions{position:sticky;bottom:max(20px,env(safe-area-inset-bottom));display:flex;flex-direction:column;align-items:center;gap:12px;width:max-content;max-width:100%;margin:24px auto 0;padding:0;z-index:5;pointer-events:none}
     /* Chromatic 0.1.1 .footer: same surface, padding, capsule and shadow.

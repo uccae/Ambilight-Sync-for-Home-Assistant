@@ -5,11 +5,12 @@ from __future__ import annotations
 import asyncio
 from collections import defaultdict, deque
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import logging
 from time import monotonic, perf_counter
 from typing import Any
 
-from haphilipsjs import GeneralFailure, PhilipsTV
+from haphilipsjs import AutenticationFailure, ConnectionFailure, GeneralFailure, PhilipsTV
 from homeassistant.components.light import (
     ATTR_BRIGHTNESS,
     ATTR_RGB_COLOR,
@@ -27,6 +28,7 @@ from homeassistant.const import (
     STATE_UNKNOWN,
 )
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.dispatcher import async_dispatcher_send
 
 from .color import (
     RGB,
@@ -53,6 +55,8 @@ from .config_model import (
 from .ambient import AmbientRenderer, AmbientResult, normalize_rendering
 from .capabilities import command_data, light_capabilities, snapshot_data
 from .room_store import get_room_store
+from .inactivity import InactivityState
+from .connection import COLOR_TRANSPORT, close_client, recover_connection
 from .const import (
     BLACK_HYSTERESIS_PERCENT,
     CONF_BLACK_HOLD,
@@ -72,6 +76,8 @@ from .const import (
     CONF_POSITION_Y,
     CONF_POSITION_FALLOFF,
     CONF_RESTORE_ON_STOP,
+    CONF_INACTIVITY_MODE, CONF_INACTIVITY_TIMEOUT, CONF_INACTIVE_POLL_RATE,
+    CONF_RESTORE_ON_INACTIVITY, CONF_RESTORE_TRANSITION,
     CONF_SCENE_CUT_THRESHOLD,
     CONF_SCENE_CUT_TRANSITION,
     CONF_SATURATION,
@@ -151,10 +157,19 @@ class AmbilightSyncManager:
             "password": password,
             "system": system,
         }
+        self._read_transport = entry.data.get(COLOR_TRANSPORT)
         self.tv = self._create_tv_client()
         self._tv_failures = 0
         self._tv_reconnects = 0
         self._tv_reconnect_at = 0.0
+        self._connection_state = "idle"
+        self._last_tv_success: str | None = None
+        self._recovery_task: asyncio.Task | None = None
+        self._discovery_next_at = 0.0
+        self._connection_epoch = 0
+        self._inactivity = InactivityState()
+        self._last_stop_reason: str | None = None
+        self._black_processing_skipped = 0
 
         self._profile_config = normalize_profile_config(profile_config)
         self.active_preset_id = ""
@@ -297,6 +312,12 @@ class AmbilightSyncManager:
         return bool(self.global_settings.get(CONF_RESTORE_ON_STOP, True))
 
     @property
+    def effective_poll_rate(self) -> float:
+        if self._inactivity.inactive and self.global_settings.get(CONF_INACTIVITY_MODE) == "reduce_polling":
+            return min(self.poll_rate, float(self.global_settings.get(CONF_INACTIVE_POLL_RATE, 1.0)))
+        return self.poll_rate
+
+    @property
     def previews(self) -> dict[str, dict[str, Any]]:
         return {entity_id: dict(value) for entity_id, value in self._previews.items()}
 
@@ -340,6 +361,16 @@ class AmbilightSyncManager:
                 "processed_stuck_warning": bool(self._stuck_processed_warned),
                 "consecutive_poll_failures": self._tv_failures,
                 "client_reconnects": self._tv_reconnects,
+                "connection_state": self._connection_state,
+                "recovery_in_progress": self._recovery_task is not None and not self._recovery_task.done(),
+                "last_successful_response": self._last_tv_success,
+                "host": self.host,
+                "color_transport": self._read_transport or ("https" if self._tv_client_options["secured_transport"] else "http"),
+                "effective_poll_rate_hz": self.effective_poll_rate,
+                "inactive": self._inactivity.inactive,
+                "inactivity_seconds": max(0.0, now - self._inactivity.black_since) if self._inactivity.black_since is not None else 0.0,
+                "last_stop_reason": self._last_stop_reason,
+                "completed_black_frames_skipped": self._black_processing_skipped,
             },
             "lights": lights,
             "rendering": {
@@ -378,6 +409,7 @@ class AmbilightSyncManager:
         self._tv_last_error = None
         self._light_last_errors.clear()
         self._running = True
+        self._last_stop_reason = None
 
         for entity_id in self._all_lights():
             event = asyncio.Event()
@@ -396,6 +428,7 @@ class AmbilightSyncManager:
     async def async_stop(self, *, restore: bool | None = None) -> None:
         async with self._lifecycle_lock:
             await self._async_stop_locked(restore=restore)
+            self._last_stop_reason = "manual"
 
     async def _async_stop_locked(self, *, restore: bool | None = None) -> None:
         await self._cancel_identify()
@@ -407,6 +440,8 @@ class AmbilightSyncManager:
         ):
             return
         self._running = False
+        self._connection_epoch += 1
+        self._connection_state = "idle"
 
         tasks: list[asyncio.Task[None]] = []
         if self._task is not None:
@@ -417,6 +452,9 @@ class AmbilightSyncManager:
         if self._stuck_diag_task is not None:
             tasks.append(self._stuck_diag_task)
             self._stuck_diag_task = None
+        if self._recovery_task is not None:
+            tasks.append(self._recovery_task)
+            self._recovery_task = None
         self._worker_tasks.clear()
         self._fade_tasks.clear()
 
@@ -474,6 +512,8 @@ class AmbilightSyncManager:
 
         self._profile_config = normalized
         self._load_active_preset()
+        if any(old_preset["global"].get(key) != self.global_settings.get(key) for key in (CONF_INACTIVITY_MODE, CONF_INACTIVITY_TIMEOUT, CONF_INACTIVE_POLL_RATE)):
+            self._inactivity.reset()
 
         rendering_only = (
             old_lights == new_lights
@@ -593,6 +633,7 @@ class AmbilightSyncManager:
         self._stuck_processed_black_since = None
         self._stuck_processed_warned = False
         self._stuck_diag_retry_at = 0.0
+        self._inactivity.reset()
         if clear_previews:
             self._previews.clear()
             self._tv_preview_payload = None
@@ -860,7 +901,18 @@ class AmbilightSyncManager:
             self._snapshot[entity_id] = LightSnapshot(state.state, dict(state.attributes))
 
     async def _restore_lights(self) -> None:
-        await self._restore_entities(set(self._snapshot))
+        await self._restore_entities(set(self._snapshot), transition=float(self.global_settings.get(CONF_RESTORE_TRANSITION, 1.5)))
+
+    async def _stop_for_inactivity(self) -> None:
+        async with self._lifecycle_lock:
+            if not self._running:
+                return
+            if self._task is asyncio.current_task():
+                self._task = None  # the producer must not cancel/await itself
+            await self._async_stop_locked(restore=bool(self.global_settings.get(CONF_RESTORE_ON_INACTIVITY, True)))
+            self._last_stop_reason = "inactivity"
+            if isinstance(self.hass, HomeAssistant):
+                async_dispatcher_send(self.hass, f"ambilight_sync_{self.entry_id}_state")
 
     async def _restore_entities(self, selected: set[str], transition: float = 0) -> None:
         calls = []
@@ -898,19 +950,30 @@ class AmbilightSyncManager:
                 payload = await self._fetch_payload()
                 now = monotonic()
                 self._record_timestamp(self._tv_poll_times, now)
-                self._update_stuck_processed_watch(payload, now)
-                self._queue_colors(payload, now)
+                all_zero = payload_is_all_zero(payload)
+                self._update_stuck_processed_watch(payload, now, all_zero)
+                action = self._inactivity.observe(
+                    all_zero, now,
+                    str(self.global_settings.get(CONF_INACTIVITY_MODE, "none")),
+                    float(self.global_settings.get(CONF_INACTIVITY_TIMEOUT, 60)),
+                )
+                if action == "stop":
+                    await self._stop_for_inactivity()
+                    return
+                self._queue_colors(payload, now, all_zero)
                 self._tv_last_error = None
             except asyncio.CancelledError:
                 raise
             except (GeneralFailure, RuntimeError, OSError, ValueError) as exc:
+                self._inactivity.reset()
                 self._tv_last_error = str(exc)
                 self._log_tv_error(exc)
             except Exception as exc:  # Defensive: keep long-running sync alive.
+                self._inactivity.reset()
                 self._tv_last_error = str(exc)
                 self._log_tv_error(exc, unexpected=True)
 
-            poll_rate = max(MIN_UPDATE_RATE, min(MAX_UPDATE_RATE, self.poll_rate))
+            poll_rate = max(MIN_UPDATE_RATE, min(MAX_UPDATE_RATE, self.effective_poll_rate))
             period = 1.0 / poll_rate
             elapsed = monotonic() - started
             await asyncio.sleep(max(0.0, period - elapsed))
@@ -927,7 +990,63 @@ class AmbilightSyncManager:
 
     def _create_tv_client(self) -> PhilipsTV:
         """Use the same library, credentials and transport as the original client."""
-        return PhilipsTV(**self._tv_client_options)
+        options = dict(self._tv_client_options)
+        if getattr(self, "_read_transport", None) == "http":
+            options.update(username=None, password=None)
+        tv = PhilipsTV(**options)
+        if getattr(self, "_read_transport", None) in ("http", "https"):
+            tv.protocol = self._read_transport
+            if self._read_transport == "http":
+                tv.session.auth = None
+        return tv
+
+    def _schedule_connection_recovery(self) -> None:
+        if not self._running or self._tv_failures < _TV_RECOVER_AFTER_FAILURES or monotonic() < self._discovery_next_at:
+            return
+        if self._recovery_task is not None and not self._recovery_task.done():
+            return
+        self._discovery_next_at = monotonic() + 30.0
+        self._recovery_task = self.entry.async_create_background_task(self.hass, self._recover_connection(), f"{self.entry_id} TV recovery")
+
+    async def _recover_connection(self) -> None:
+        if not self._running or not self._tv_failures:
+            return
+        epoch = self._connection_epoch
+        recovered = None
+        self._connection_state = "searching"
+        try:
+            async with asyncio.timeout(20):
+                recovered = await recover_connection(self.hass, dict(self._tv_client_options), getattr(self.entry, "unique_id", None), self.source)
+            if recovered is None:
+                if self._tv_failures:
+                    self._connection_state = "unavailable"
+                return
+            async with self._tv_lock:
+                if epoch != self._connection_epoch or not self._running or not self._tv_failures:
+                    return
+                # Persist only after identity and a real color response match.
+                # Read current data so unrelated config edits are preserved.
+                data = {**self.entry.data, "host": recovered.host, COLOR_TRANSPORT: recovered.transport}
+                self.hass.config_entries.async_update_entry(self.entry, data=data)
+                previous = self.tv
+                self.tv = recovered.tv
+                self.host = recovered.host
+                self._read_transport = recovered.transport
+                self._tv_client_options["host"] = recovered.host
+                self._tv_reconnects += 1
+                self._tv_reconnect_at = monotonic() + _TV_RECOVER_INTERVAL
+                self._connection_state = "reconnecting"
+                recovered = None
+                await self._close_tv_client(previous)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            if self._tv_failures:
+                self._connection_state = "unavailable"
+            _LOGGER.debug("TV rediscovery unavailable: %s", exc)
+        finally:
+            if recovered is not None:
+                await close_client(recovered.tv)
 
     async def _close_tv_client(self, tv: PhilipsTV) -> None:
         """Bound cleanup so a failed old connection cannot stall recovery."""
@@ -959,14 +1078,19 @@ class AmbilightSyncManager:
                     raise GeneralFailure(
                         f"Philips Ambilight {self.source} returned no valid color samples"
                     )
-            except Exception:
+            except Exception as exc:
                 self._tv_failures += 1
+                self._connection_state = ("auth_required" if isinstance(exc, AutenticationFailure) else
+                                          "disconnected" if isinstance(exc, (ConnectionFailure, OSError)) else "api_unavailable")
+                self._schedule_connection_recovery()
                 raise
             self._tv_failures = 0
+            self._last_tv_success = datetime.now(timezone.utc).isoformat()
+            self._connection_state = "connected"
             return payload
 
-    def _update_stuck_processed_watch(self, payload: Any, now: float) -> None:
-        if self.source != SOURCE_PROCESSED or not payload_is_all_zero(payload):
+    def _update_stuck_processed_watch(self, payload: Any, now: float, all_zero: bool | None = None) -> None:
+        if self.source != SOURCE_PROCESSED or not (payload_is_all_zero(payload) if all_zero is None else all_zero):
             self._stuck_processed_black_since = None
             self._stuck_processed_warned = False
             self._stuck_diag_retry_at = 0.0
@@ -1255,8 +1379,19 @@ class AmbilightSyncManager:
         self._black_state[entity_id] = black
         return black, luminance, effective_threshold
 
-    def _queue_colors(self, payload: Any, now: float | None = None) -> None:
+    def _queue_colors(self, payload: Any, now: float | None = None, all_zero: bool | None = None) -> None:
         self._tv_preview_payload = payload
+        # Once every black flow has completed, no timer, pending command or
+        # renderer tail may be skipped. A nonzero frame always takes the full path.
+        active = [e for e in self._all_lights() if not self._output_blocked(e)]
+        if (active and not self.rendering_config.get("phosphor") and not self._handoff
+                and not self._fade_tasks and not self._pending
+                and all(e in self._black_faded and self._light_available.get(e) is True
+                        and (state := self.hass.states.get(e)) is not None
+                        and state.state not in (STATE_UNAVAILABLE, STATE_UNKNOWN) for e in active)
+                and (payload_is_all_zero(payload) if all_zero is None else all_zero)):
+            self._black_processing_skipped += 1
+            return
         samples_cache: dict[float, dict[str, WeightedSamples]] = {}
         # Color and black detection must use the same samples for this frame.
         # Keeping the cache local also handles profile/topology changes naturally.
