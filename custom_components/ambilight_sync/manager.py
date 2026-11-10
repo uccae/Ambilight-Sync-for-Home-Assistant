@@ -7,13 +7,13 @@ from collections import defaultdict, deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import logging
+import math
 from time import monotonic, perf_counter
 from typing import Any
 
 from haphilipsjs import AutenticationFailure, ConnectionFailure, GeneralFailure, PhilipsTV
 from homeassistant.components.light import (
     ATTR_BRIGHTNESS,
-    ATTR_RGB_COLOR,
     ATTR_TRANSITION,
     DOMAIN as LIGHT_DOMAIN,
 )
@@ -27,7 +27,7 @@ from homeassistant.const import (
     STATE_UNAVAILABLE,
     STATE_UNKNOWN,
 )
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, Context, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 
 from .color import (
@@ -36,7 +36,6 @@ from .color import (
     adjust_saturation,
     color_distance,
     color_from_samples,
-    extract_spatial_samples,
     extract_spatial_weight_map,
     extract_tv_preview,
     extract_zone_samples,
@@ -56,6 +55,11 @@ from .ambient import AmbientRenderer, AmbientResult, normalize_rendering
 from .capabilities import command_data, light_capabilities, snapshot_data
 from .room_store import get_room_store
 from .inactivity import InactivityState
+from .lab import LabRuntime
+from .dynamics import SceneDynamics, AutoResponse
+from .effects import EffectRuntime
+from .lab_colors import snapshot_light
+from .external import changed as light_changed, matches as report_matches
 from .connection import COLOR_TRANSPORT, close_client, recover_connection
 from .const import (
     BLACK_HYSTERESIS_PERCENT,
@@ -118,6 +122,8 @@ class LightCommand:
     rgb: RGB = (0, 0, 0)
     brightness: int = 0
     transition: float = 0.0
+    adaptive_transition: bool = False
+    scene_transition: bool = False
 
 
 class AmbilightSyncManager:
@@ -178,6 +184,17 @@ class AmbilightSyncManager:
         self.light_configs: dict[str, dict[str, Any]] = {}
         self.rendering_config: dict[str, Any] = {}
         self._load_active_preset()
+        self._lab = LabRuntime(self.global_settings.get("lab"))
+        self._scene = SceneDynamics(self._lab.config)
+        self._response = AutoResponse(self._lab.config)
+        self._effects = EffectRuntime(self._lab.config["imports"])
+        self._extension_holds: set[str] = set()
+        self._external_holds: dict[str, float | None] = {}
+        self._external_listeners = []
+        self._own_contexts = deque(maxlen=4096)
+        self._own_context_ids: set[str] = set()
+        self._own_reports = {}
+        self._resume_transition = {}
         self._ambient_renderer: AmbientRenderer | None = None
         self._renderer_error: str | None = None
         self._render_fallback_active = False
@@ -337,7 +354,15 @@ class AmbilightSyncManager:
             avg_latency = (
                 sum(latencies) / len(latencies) if latencies else 0.0
             )
+            scene_rate = self._scene.rates.get(entity_id)
             lights[entity_id] = {
+                "scene_rate_hz": round(scene_rate, 2) if scene_rate is not None else None,
+                "scene_transition_s": self._scene.transition(scene_rate) if scene_rate is not None else None,
+                "auto_rate_hz": round(self._response.effective_rates.get(entity_id, float(settings[CONF_UPDATE_RATE])),2),
+                "auto_transition_s": self._response.transitions.get(entity_id),
+                "external_control": entity_id in self._external_holds,
+                "external_until": self._external_holds.get(entity_id),
+                "effects": self._previews.get(entity_id, {}).get("effects", []),
                 "target_rate_hz": round(float(settings[CONF_UPDATE_RATE]), 2),
                 "queued_rate_hz": round(self._rolling_rate(self._queued_times[entity_id], now), 2),
                 "actual_rate_hz": round(self._rolling_rate(self._successful_times[entity_id], now), 2),
@@ -348,6 +373,10 @@ class AmbilightSyncManager:
                 "scene_cuts": int(self._scene_cut_count.get(entity_id, 0)),
                 "scene_cut_score": round(self._last_scene_cut_score.get(entity_id, 0.0), 1),
             }
+        common_scene_rate = (
+            self._scene.requested_rate()
+            if self._lab.config["dynamics_enabled"] and self._scene.previous_time is not None else None
+        )
         return {
             "tv": {
                 "target_poll_rate_hz": round(self.poll_rate, 2),
@@ -373,6 +402,16 @@ class AmbilightSyncManager:
                 "completed_black_frames_skipped": self._black_processing_skipped,
             },
             "lights": lights,
+            "extensions": {"errors": dict(self._effects.errors), "active": [i["definition"]["id"] for i in self._effects.imports if i["enabled"]]},
+            "scene_dynamics": {
+                "activity": round(self._scene.activity, 3),
+                "mean_change_per_s": round(self._scene.mean_change, 3),
+                "changed_zones": round(self._scene.changed_zones, 3),
+                "samples": len(self._scene.window),
+                "common_rate_hz": round(common_scene_rate, 2) if common_scene_rate is not None else None,
+                "common_transition_s": self._scene.transition(common_scene_rate) if common_scene_rate is not None else None,
+            },
+            "lab": {"media_state": self._lab.media_state, "pause": self._lab.pause_mix, "static": self._lab.static_mix, "history_samples": sum(len(h) for h in self._lab.history.values())},
             "rendering": {
                 "mode": self.rendering_config["mode"],
                 "active_mode": "classic_fallback" if self._render_fallback_active else self.rendering_config["mode"],
@@ -410,6 +449,7 @@ class AmbilightSyncManager:
         self._light_last_errors.clear()
         self._running = True
         self._last_stop_reason = None
+        self._listen_external()
 
         for entity_id in self._all_lights():
             event = asyncio.Event()
@@ -440,6 +480,7 @@ class AmbilightSyncManager:
         ):
             return
         self._running = False
+        self._stop_external_listeners()
         self._connection_epoch += 1
         self._connection_state = "idle"
 
@@ -512,6 +553,21 @@ class AmbilightSyncManager:
 
         self._profile_config = normalized
         self._load_active_preset()
+        if self._lab.config != self.global_settings.get("lab"):
+            old_lab = self._lab.config
+            self._lab.configure(self.global_settings["lab"])
+            if any(old_lab[k] != self._lab.config[k] for k in ("dynamics_enabled", "dynamics_settings", "dynamics_light_settings")):
+                self._scene.reset()
+            self._scene.config = self._lab.config
+            if any(old_lab[k] != self._lab.config[k] for k in ("auto_enabled", "auto_settings", "auto_lights", "auto_light_settings")):
+                self._response.reset()
+            self._response.config = self._lab.config
+            if old_lab["imports"] != self._lab.config["imports"]:
+                self._effects = EffectRuntime(self._lab.config["imports"])
+                self._handoff.update(self._extension_holds)
+                self._extension_holds.clear()
+        if was_running:
+            self._listen_external()
         if any(old_preset["global"].get(key) != self.global_settings.get(key) for key in (CONF_INACTIVITY_MODE, CONF_INACTIVITY_TIMEOUT, CONF_INACTIVE_POLL_RATE)):
             self._inactivity.reset()
 
@@ -605,6 +661,16 @@ class AmbilightSyncManager:
         )
 
     def _reset_runtime_state(self, *, clear_previews: bool = True) -> None:
+        self._lab.reset()
+        self._scene.reset()
+        self._response.reset()
+        self._effects.reset()
+        self._extension_holds.clear()
+        self._external_holds.clear()
+        self._own_contexts.clear()
+        self._own_context_ids.clear()
+        self._own_reports.clear()
+        self._resume_transition.clear()
         self._command_epoch.clear()
         self._handoff.clear()
         self._handoff_until.clear()
@@ -657,7 +723,7 @@ class AmbilightSyncManager:
 
     def _output_blocked(self, entity_id):
         data = self._coordination()
-        return self._is_excluded(entity_id) or entity_id in data.get("_identifying", {}) or entity_id in data.get("_participation_pending", set()) or entity_id == self._identify_entity
+        return entity_id in self._external_holds or self._is_excluded(entity_id) or entity_id in data.get("_identifying", {}) or entity_id in data.get("_participation_pending", set()) or entity_id == self._identify_entity
 
     def _related_managers(self):
         others = [m for m in self._coordination().values() if isinstance(m, AmbilightSyncManager)]
@@ -675,6 +741,11 @@ class AmbilightSyncManager:
             self.hass, self._light_worker(entity_id, event), f"{self.entry_id} Ambilight light {entity_id}")
 
     def _forget_light_target(self, entity_id):
+        self._lab.forget(entity_id)
+        self._scene.forget(entity_id)
+        self._response.forget(entity_id)
+        self._effects.forget(entity_id)
+        self._extension_holds.discard(entity_id)
         self._command_epoch[entity_id] += 1
         for values in (self._pending, self._last_queued, self._last_successful,
                        self._last_normal_queued_at, self._smoothed, self._last_selected_raw, self._last_nonblack_rgb, self._handoff_until,
@@ -694,6 +765,8 @@ class AmbilightSyncManager:
             if task:
                 await asyncio.gather(task, return_exceptions=True)
             if participating:
+                self._external_holds.pop(entity_id, None)
+                self._resume_transition[entity_id] = float(self.global_settings.get("external_transition", 2))
                 self._excluded.discard(entity_id)
             else:
                 self._excluded.add(entity_id)
@@ -775,21 +848,21 @@ class AmbilightSyncManager:
                 async with asyncio.timeout(3):
                     if hold:
                         data = command_data(entity_id, state, (0, 136, 255), 180, .25)
-                        await self.hass.services.async_call("light", "turn_on", data, blocking=True)
+                        await self._call_light("turn_on", data)
                     elif caps["brightness"]:
                         base = max(80, min(180, snapshot.attributes.get("brightness", 140)))
                         for level in (min(220, round(base*1.3)), round(base*.45), min(220, round(base*1.3))):
                             data = {"entity_id": entity_id, "brightness": level}
                             if caps["transition"]:
                                 data["transition"] = .25
-                            await self.hass.services.async_call("light", "turn_on", data, blocking=True)
+                            await self._call_light("turn_on", data)
                             await asyncio.sleep(.35)
                     elif caps["flash"]:
-                        await self.hass.services.async_call("light", "turn_on", {"entity_id": entity_id, "flash": "short"}, blocking=True)
+                        await self._call_light("turn_on", {"entity_id": entity_id, "flash": "short"})
                         await asyncio.sleep(.8)
                     else:
                         service = "turn_off" if snapshot.state == STATE_ON else "turn_on"
-                        await self.hass.services.async_call("light", service, {"entity_id": entity_id}, blocking=True)
+                        await self._call_light(service, {"entity_id": entity_id})
                         await asyncio.sleep(.45)
             if hold:
                 # The UI renews this lease while the light remains selected.
@@ -807,11 +880,11 @@ class AmbilightSyncManager:
             try:
                 resumable = [m for m in self._related_managers() if m._running and entity_id in m.light_configs
                              and not m._is_excluded(entity_id) and m._tv_preview_payload is not None]
-                if snapshot is not None and not resumable:
+                if snapshot is not None and not resumable and not any(entity_id in m._external_holds for m in self._related_managers()):
                     async with self._output_lock(entity_id), asyncio.timeout(3):
                         data = snapshot_data(entity_id, self.hass.states.get(entity_id), snapshot, .25)
-                        await self.hass.services.async_call("light", "turn_on" if snapshot.state == STATE_ON else "turn_off",
-                            data if snapshot.state == STATE_ON else {"entity_id": entity_id}, blocking=True)
+                        await self._call_light("turn_on" if snapshot.state == STATE_ON else "turn_off",
+                            data if snapshot.state == STATE_ON else {"entity_id": entity_id})
             except Exception as exc:
                 self._light_last_errors[entity_id] = f"Identify restore failed: {exc}"
             finally:
@@ -824,14 +897,156 @@ class AmbilightSyncManager:
 
     async def _send_sync_command(self, entity_id, command, epoch):
         async with self._output_lock(entity_id):
-            if epoch != self._command_epoch[entity_id] or self._output_blocked(entity_id) or entity_id not in self.light_configs:
+            if epoch != self._command_epoch[entity_id] or self._output_blocked(entity_id) or entity_id in self._extension_holds or entity_id not in self.light_configs:
                 return False
             state = self.hass.states.get(entity_id)
             if state is None or state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
                 raise RuntimeError("Light entity is unavailable")
             data = command_data(entity_id, state, command.rgb, command.brightness, command.transition) if command.on else {ATTR_ENTITY_ID: entity_id}
-            await self.hass.services.async_call(LIGHT_DOMAIN, SERVICE_TURN_ON if command.on else SERVICE_TURN_OFF, data, blocking=True)
+            adaptive = command.adaptive_transition and ATTR_BRIGHTNESS in data and ATTR_TRANSITION in data
+            if adaptive:
+                # Only the worker knows which target survived the latest-wins queue.
+                previous = self._last_successful.get(entity_id)
+                if previous is not None:
+                    previous_level = previous.brightness if previous.on else 0
+                else:
+                    previous_level = 0 if state.state == STATE_OFF else state.attributes.get(ATTR_BRIGHTNESS)
+                data[ATTR_TRANSITION] = self._response.brightness_transition(
+                    entity_id, command.transition, previous_level, command.brightness,
+                    scene_transition=command.scene_transition,
+                )
+            started = monotonic()
+            await self._call_light(SERVICE_TURN_ON if command.on else SERVICE_TURN_OFF, data)
+            if epoch == self._command_epoch[entity_id]:
+                if ATTR_TRANSITION in data and self._response.selected(entity_id):
+                    self._response.transitions[entity_id] = data[ATTR_TRANSITION]
+                self._response.record(entity_id, monotonic()-started, monotonic())
             return True
+
+    async def _call_light(self, service, data):
+        peers = self._related_managers()
+        if not any(m._external_listeners for m in peers):
+            await self.hass.services.async_call(LIGHT_DOMAIN, service, data, blocking=True)
+            return
+        context = Context()
+        entity = data.get("entity_id")
+        for peer in peers:
+            if len(peer._own_contexts) == peer._own_contexts.maxlen:
+                peer._own_context_ids.discard(peer._own_contexts[0])
+            peer._own_contexts.append(context.id)
+            peer._own_context_ids.add(context.id)
+            if isinstance(entity, str):
+                reports = peer._own_reports.setdefault(entity, deque(maxlen=64))
+                if not reports:
+                    state = self.hass.states.get(entity)
+                    if state is not None:
+                        reports.append(("turn_on" if state.state == STATE_ON else "turn_off", dict(state.attributes), monotonic()+float(data.get("transition", 0))+1))
+                reports.append((service, dict(data), monotonic()+float(data.get("transition", 0))+1))
+        await self.hass.services.async_call(LIGHT_DOMAIN, service, data, blocking=True, context=context)
+
+    def _is_own_context(self, context_id):
+        return any(context_id in m._own_context_ids for m in self._related_managers())
+
+    def _stop_external_listeners(self):
+        for unsubscribe in self._external_listeners:
+            unsubscribe()
+        self._external_listeners.clear()
+
+    def _listen_external(self):
+        self._stop_external_listeners()
+        if self.global_settings.get("external_control", "continue") == "continue" or not hasattr(self.hass, "bus"):
+            return
+
+        @callback
+        def command(event):
+            if self._is_own_context(event.context.id) or event.data.get("domain") != "light":
+                return
+            service = event.data.get("service")
+            if service not in ("turn_on", "turn_off", "toggle"):
+                return
+            data = event.data.get("service_data", {})
+            entities = data.get("entity_id", [])
+            if isinstance(entities, str):
+                entities = entities.split(",")
+            if "all" in entities:
+                entities = self.light_configs
+            elif any(key in data for key in ("area_id", "device_id", "floor_id", "label_id")) or any(e.startswith("group.") for e in entities):
+                try:
+                    from homeassistant.helpers import target as target_helpers
+                    selected = target_helpers.async_extract_referenced_entity_ids(self.hass, target_helpers.TargetSelection(data), True)
+                    entities = selected.referenced | selected.indirectly_referenced
+                except (ImportError, AttributeError, KeyError, ValueError):
+                    return  # state reports still provide the fallback
+            for entity in entities:
+                if entity in self.light_configs and not self._is_excluded(entity):
+                    self._release_external(entity, force_hold=service in ("turn_off", "toggle"))
+
+        @callback
+        def report(event):
+            entity = event.data.get("entity_id")
+            if entity not in self.light_configs or self._is_own_context(event.context.id) or self._is_excluded(entity) or entity == self._identify_entity:
+                return
+            old, new = event.data.get("old_state"), event.data.get("new_state")
+            if not light_changed(old, new):
+                return
+            expected = [item for m in self._related_managers() for item in m._own_reports.get(entity, ())]
+            if expected and not (event.context.user_id or event.context.parent_id):
+                recent = [(service,data,until) for service,data,until in expected if until+2 >= monotonic()]
+                if any(report_matches(new, service, data) for service,data,_ in recent):
+                    return
+                # Native transition reports may be untagged. Accept values
+                # inside the recent target envelope, not every report within a
+                # perpetually extended grace period. Stable-scene overrides
+                # outside the envelope remain detectable.
+                attrs = new.attributes
+                settling = [data for service,data,until in recent if service == "turn_on" and until >= monotonic()]
+                if new.state == STATE_ON and settling:
+                    colors = [d["rgb_color"] for d in settling if d.get("rgb_color") is not None]
+                    levels = [d["brightness"] for d in settling if d.get("brightness") is not None]
+                    color_ok = not colors or attrs.get("rgb_color") is None or all(min(c[i] for c in colors)-15 <= attrs["rgb_color"][i] <= max(c[i] for c in colors)+15 for i in range(3))
+                    level_ok = not levels or min(levels)-8 <= attrs.get("brightness", levels[-1]) <= max(levels)+8
+                    if color_ok and level_ok:
+                        return
+            self._release_external(entity, force_hold=new.state == "off")
+
+        self._external_listeners.extend((self.hass.bus.async_listen("call_service", command), self.hass.bus.async_listen("state_changed", report)))
+
+    def _release_external(self, entity, *, force_hold=False):
+        if not self._running:
+            return
+        if entity in self._external_holds:
+            if force_hold:
+                self._external_holds[entity] = None
+            elif self._external_holds[entity] is not None:
+                self._external_holds[entity] = monotonic()+float(self.global_settings.get("external_timeout", 60))
+            return
+        policy = self.global_settings.get("external_control", "continue")
+        if policy == "continue":
+            return
+        until = monotonic()+float(self.global_settings.get("external_timeout", 60)) if policy == "temporary" and not force_hold else None
+        self._external_holds[entity] = until
+        for peer in self._related_managers():
+            if peer._identify_entity == entity and peer._identify_task is not None:
+                peer._identify_task.cancel()
+        self._cancel_black_flow(entity, reason="external control")
+        self._forget_light_target(entity)
+        self._snapshot.pop(entity, None)  # a later Stop must respect the new owner
+        self._previews[entity] = {"state": "external", "effects": ["external"], "output_rgb": [0,0,0], "brightness": 0}
+
+    def _expire_external(self, now):
+        for entity, until in list(self._external_holds.items()):
+            if until is None or now < until:
+                continue
+            self._external_holds.pop(entity)
+            state = self.hass.states.get(entity)
+            if state is None or state.state != STATE_ON:
+                self._external_holds[entity] = None
+                continue
+            if self._is_excluded(entity):
+                continue
+            self._capture_light(entity)
+            self._handoff.add(entity)
+            self._resume_transition[entity] = float(self.global_settings.get("external_transition", 2))
 
     def _reset_renderer(self) -> None:
         self._ambient_renderer = None
@@ -940,8 +1155,7 @@ class AmbilightSyncManager:
             data = snapshot_data(entity_id, state, snapshot, transition) if snapshot.state == STATE_ON else {ATTR_ENTITY_ID: entity_id}
             if transition > 0 and light_capabilities(state)["transition"]:
                 data[ATTR_TRANSITION] = transition
-            await self.hass.services.async_call(LIGHT_DOMAIN,
-                SERVICE_TURN_ON if snapshot.state == STATE_ON else SERVICE_TURN_OFF, data, blocking=True)
+            await self._call_light(SERVICE_TURN_ON if snapshot.state == STATE_ON else SERVICE_TURN_OFF, data)
 
     async def _run_loop(self) -> None:
         while self._running:
@@ -966,10 +1180,18 @@ class AmbilightSyncManager:
                 raise
             except (GeneralFailure, RuntimeError, OSError, ValueError) as exc:
                 self._inactivity.reset()
+                self._lab.interrupt()
+                self._scene.reset()
+                self._response.reset()
+                self._effects.reset()
                 self._tv_last_error = str(exc)
                 self._log_tv_error(exc)
             except Exception as exc:  # Defensive: keep long-running sync alive.
                 self._inactivity.reset()
+                self._lab.interrupt()
+                self._scene.reset()
+                self._response.reset()
+                self._effects.reset()
                 self._tv_last_error = str(exc)
                 self._log_tv_error(exc, unexpected=True)
 
@@ -1290,11 +1512,21 @@ class AmbilightSyncManager:
             )
         return selected
 
-    def _light_update_due(self, entity_id: str, settings: dict[str, Any], now: float) -> bool:
+    def _light_output_rate(self, entity_id: str, settings: dict[str, Any], *, scene_selected: bool, recovering: bool) -> float:
         rate = max(
             MIN_UPDATE_RATE,
             min(MAX_UPDATE_RATE, float(settings.get(CONF_UPDATE_RATE, self.update_rate))),
         )
+        if scene_selected or self._response.selected(entity_id):
+            rate = min(rate, self.effective_poll_rate)
+        if scene_selected:
+            rate = self._scene.rate(entity_id, rate, recovering=recovering)
+        rate = self._response.rate(entity_id, rate)
+        if scene_selected:
+            self._scene.rates[entity_id] = rate
+        return rate
+
+    def _light_update_due(self, entity_id: str, rate: float, now: float) -> bool:
         last = self._last_normal_queued_at.get(entity_id)
         return last is None or now - last + 1e-9 >= (1.0 / rate)
 
@@ -1381,6 +1613,22 @@ class AmbilightSyncManager:
 
     def _queue_colors(self, payload: Any, now: float | None = None, all_zero: bool | None = None) -> None:
         self._tv_preview_payload = payload
+        now = monotonic() if now is None else now
+        self._expire_external(now)
+        lab_config = self._lab.config
+        monitor = lab_config["dynamics_enabled"] or any(i["enabled"] for i in self._effects.imports)
+        if self._lab.enabled or monitor:
+            perimeter = extract_tv_preview(payload) or {}
+            raw_samples = tuple(tuple(rgb) for side in perimeter.values() for rgb in side)
+            samples = raw_samples if len(raw_samples)<=400 else tuple(raw_samples[i*len(raw_samples)//400] for i in range(400))
+            source = lab_config["pause_entity"]
+            media = self.hass.states.get(source) if source else None
+            media_state = media.state if media is not None else "unknown"
+            if source.startswith("media_player.") and media_state == "on":
+                media_state = "unknown"
+            self._lab.observe(samples, now, media_state)
+            if monitor:self._scene.observe(samples, now, tuple(map(len,perimeter.values())))
+        if self._effects.imports:self._effects.begin(now, self.hass.states.get)
         # Once every black flow has completed, no timer, pending command or
         # renderer tail may be skipped. A nonzero frame always takes the full path.
         active = [e for e in self._all_lights() if not self._output_blocked(e)]
@@ -1413,6 +1661,12 @@ class AmbilightSyncManager:
                 self._last_normal_queued_at.pop(entity_id, None)
                 self._pending.pop(entity_id, None)
             if not available:
+                self._scene.forget(entity_id)
+                self._response.forget(entity_id)
+                self._effects.forget(entity_id)
+                self._lab.forget(entity_id)
+                self._extension_holds.discard(entity_id)
+                if monitor or self._lab.enabled:self._smoothed.pop(entity_id,None)
                 if self._ambient_renderer is not None:
                     self._ambient_renderer.forget(entity_id)
                 self._light_last_errors[entity_id] = "Light entity is unavailable"
@@ -1449,6 +1703,11 @@ class AmbilightSyncManager:
                 entity_id, input_luminance, float(settings[CONF_BLACK_THRESHOLD])
             )
             if black:
+                self._extension_holds.discard(entity_id)
+                self._scene.forget(entity_id)
+                self._response.forget(entity_id)
+                self._effects.forget(entity_id)
+                self._lab.forget(entity_id)
                 if self._ambient_renderer is not None:
                     self._ambient_renderer.forget(entity_id)
                 self._handle_black_frame(
@@ -1461,23 +1720,61 @@ class AmbilightSyncManager:
                 or entity_id in self._black_faded
                 or entity_id in self._fade_tasks
             )
+            if scene_cut:
+                self._scene_cut_count[entity_id] += 1
+                _LOGGER.debug(
+                    "Light %s scene cut score=%.1f threshold=%.1f",
+                    entity_id,
+                    scene_cut_score,
+                    scene_cut_threshold,
+                )
+            scene_selected = self._scene.selected(entity_id)
+            if scene_selected:
+                if returning_from_black:
+                    self._scene.pending_cuts[entity_id] = True
+                elif scene_cut:
+                    self._scene.pending_cuts.setdefault(entity_id, False)
+                scene_cut = entity_id in self._scene.pending_cuts
             priority_frame = (returning_from_black or scene_cut) and not (handoff or soft_handoff)
             self._cancel_black_flow(
                 entity_id,
                 reason="scene cut/non-black priority" if priority_frame else "non-black frame",
             )
 
-            if scene_cut:
-                self._scene_cut_count[entity_id] += 1
-                _LOGGER.debug(
-                    "Light %s scene cut score=%.1f threshold=%.1f; bypassing rate/smoothing",
-                    entity_id,
-                    scene_cut_score,
-                    scene_cut_threshold,
-                )
-
-            if not priority_frame and not self._light_update_due(entity_id, settings, now):
+            policy = {"plans": [], "rate": None, "transition": None, "hold": False}
+            if self._effects.imports:
+                source_brightness = output_brightness(target, float(settings[CONF_INTENSITY]), float(settings[CONF_BRIGHTNESS]), float(settings[CONF_MINIMUM_BRIGHTNESS]))
+                original_rgb, original_level = snapshot_light(self._snapshot.get(entity_id))
+                point = self.rendering_config.get("room",{}).get("lights",{}).get(entity_id,{})
+                tv_point = self.rendering_config.get("room",{}).get("tv",{})
+                spatial = {k:float(point.get(k,0)) for k in ("x","y","z")}
+                spatial["distance"] = math.sqrt(sum((spatial[k]-float(tv_point.get(k,0)))**2 for k in ("x","y","z")))
+                policy = self._effects.prepare(entity_id, target, source_brightness, now, {"activity":self._scene.activity,"mean_change":self._scene.mean_change,"changed_zones":self._scene.changed_zones,"paused":float(self._lab.media_state in ("paused","on")),**dict(zip(("original_r","original_g","original_b"),original_rgb)),"original_brightness":original_level/255*100,**spatial})
+                if policy["hold"]:
+                    if entity_id not in self._extension_holds:
+                        self._command_epoch[entity_id] += 1
+                        for values in (self._pending,self._last_queued,self._last_successful,self._last_normal_queued_at,self._smoothed):values.pop(entity_id,None)
+                        self._lab.forget(entity_id)
+                        self._scene.forget(entity_id)
+                        self._response.forget(entity_id)
+                        self._extension_holds.add(entity_id)
+                    self._previews[entity_id] = {"state":"effect_hold","effects":["custom:"+i for i,_ in policy["plans"]]}
+                    continue
+                if entity_id in self._extension_holds:
+                    self._extension_holds.discard(entity_id)
+                    self._handoff.add(entity_id)
+                    handoff = True
+                if policy["rate"] is not None:
+                    settings[CONF_UPDATE_RATE] = min(float(settings[CONF_UPDATE_RATE]), policy["rate"])
+                if policy["transition"] is not None and not priority_frame:
+                    settings[CONF_TRANSITION] = policy["transition"]
+            output_rate = self._light_output_rate(
+                entity_id, settings, scene_selected=scene_selected,
+                recovering=priority_frame and self._scene.pending_cuts.get(entity_id, False),
+            )
+            if (scene_selected or not priority_frame) and not self._light_update_due(entity_id, output_rate, now):
                 continue
+            self._scene.pending_cuts.pop(entity_id, None)
 
             # Reuse existing frame smoothing only for the short handoff when a
             # light has no native transition. No timer, extra frame or transport.
@@ -1493,7 +1790,9 @@ class AmbilightSyncManager:
                 # A cut should visually catch up immediately. Carrying the old
                 # smoothing accumulator across a cut would recreate the lag we
                 # are explicitly trying to remove.
-                smoothed = target
+                smoothed = self._scene.smooth(entity_id, self._smoothed.get(entity_id), target, now, 0, float(settings[CONF_UPDATE_RATE]), snap=True) if scene_selected else target
+            elif scene_selected:
+                smoothed = self._scene.smooth(entity_id,self._smoothed.get(entity_id),target,now,max(50.0 if soft_handoff else 0.0,float(settings[CONF_SMOOTHING])),min(float(settings[CONF_UPDATE_RATE]),self.poll_rate))
             else:
                 smoothed = smooth_rgb(
                     self._smoothed.get(entity_id), target, max(50.0 if soft_handoff else 0.0, float(settings[CONF_SMOOTHING]))
@@ -1517,8 +1816,30 @@ class AmbilightSyncManager:
             raw_brightness = round(255.0 * (output_luminance / 100.0) * (brightness_pct / 100.0) * float(settings[CONF_INTENSITY]) / 100.0)
             floor_percent = min(float(settings[CONF_MINIMUM_BRIGHTNESS]), brightness_pct)
             brightness = output_brightness(smoothed, float(settings[CONF_INTENSITY]), brightness_pct, floor_percent)
+            reasons = []
+            calibration_enabled = lab_config["calibration_enabled"]
+            auto_selected = self._response.selected(entity_id)
+            capabilities = light_capabilities(state) if calibration_enabled or auto_selected else {}
+            if self._lab.enabled or calibration_enabled:
+                brightness_range = None
+                if calibration_enabled and capabilities["brightness"]:
+                    brightness_range = (round(255 * floor_percent / 100), round(255 * brightness_pct / 100))
+                rgb, brightness, reasons = self._lab.decorate(
+                    entity_id, rgb, brightness, self._snapshot.get(entity_id), now,
+                    brightness_range=brightness_range, color_supported=capabilities.get("color", False),
+                )
+            if policy["plans"]:
+                rgb, brightness, custom_reasons = self._effects.decorate(policy, rgb, brightness)
+                reasons.extend(custom_reasons)
+            adaptive_transition = False
+            if auto_selected:
+                adaptive_transition = not handoff and capabilities["brightness"] and capabilities["transition"]
+                reasons.append("auto")
+            if scene_selected:
+                reasons.append("dynamics")
             self._last_nonblack_rgb[entity_id] = rgb
             self._previews[entity_id] = {
+                "effects": reasons,
                 "input_rgb": list(target),
                 "smoothed_rgb": [round(channel, 3) for channel in smoothed],
                 "neutral_rgb": list(neutral_rgb),
@@ -1559,6 +1880,8 @@ class AmbilightSyncManager:
 
             previous = self._last_queued.get(entity_id) or self._last_successful.get(entity_id)
             threshold = float(settings[CONF_THRESHOLD])
+            if brightness == 0 and previous is not None and not previous.on:
+                continue  # a full blend to an originally-off light needs one OFF
             if not handoff and not priority_frame and previous is not None and previous.on:
                 if (
                     color_distance(previous.rgb, rgb) < threshold
@@ -1571,16 +1894,24 @@ class AmbilightSyncManager:
                 if priority_frame
                 else float(settings[CONF_TRANSITION])
             )
+            scene_transition = scene_selected and not (handoff or soft_handoff)
+            if scene_transition:
+                transition = self._scene.transition(output_rate)
+                if policy["transition"] is not None and not priority_frame:
+                    transition = min(transition, policy["transition"])
             if handoff:
-                transition = max(.4, transition)
+                resume = self._resume_transition.pop(entity_id, .4)
+                transition = max(resume, transition)
                 self._handoff.discard(entity_id)
             self._queue_command(
                 entity_id,
                 LightCommand(
-                    on=True,
+                    on=brightness > 0,
                     rgb=rgb,
                     brightness=brightness,
                     transition=transition,
+                    adaptive_transition=adaptive_transition,
+                    scene_transition=scene_transition,
                 ),
                 normal=True,
                 queued_at=now,

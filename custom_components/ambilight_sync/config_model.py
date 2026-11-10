@@ -6,6 +6,7 @@ from copy import deepcopy
 from typing import Any
 from .ambient import normalize_rendering
 from .inactivity import MODES as INACTIVITY_MODES, bounded
+from .lab import LIGHT_RULES, normalize_lab
 
 from .const import (
     COLOR_MODES,
@@ -112,7 +113,7 @@ def _float(raw: Any, default: float) -> float:
         return default
 
 
-def normalize_settings(raw: Any) -> dict[str, Any]:
+def normalize_settings(raw: Any, *, lab_config=None) -> dict[str, Any]:
     """Validate and clamp global settings."""
     if not isinstance(raw, dict):
         raw = {}
@@ -185,6 +186,10 @@ def normalize_settings(raw: Any) -> dict[str, Any]:
         CONF_SCENE_CUT_TRANSITION: scene_cut_transition,
         CONF_CORNER_INFLUENCE: corner_influence,
         CONF_RESTORE_ON_STOP: restore,
+        "lab": lab_config if lab_config is not None else normalize_lab(raw.get("lab")),
+        "external_control": raw.get("external_control") if raw.get("external_control") in ("continue", "release", "temporary") else "continue",
+        "external_timeout": bounded(raw.get("external_timeout"), 60, 5, 3600),
+        "external_transition": bounded(raw.get("external_transition"), 2, .1, 10),
         CONF_INACTIVITY_MODE: raw.get(CONF_INACTIVITY_MODE) if raw.get(CONF_INACTIVITY_MODE) in INACTIVITY_MODES else "none",
         CONF_INACTIVITY_TIMEOUT: bounded(raw.get(CONF_INACTIVITY_TIMEOUT), 60.0, 1.0, 86400.0),
         CONF_INACTIVE_POLL_RATE: min(poll_rate, bounded(raw.get(CONF_INACTIVE_POLL_RATE), 1.0, MIN_UPDATE_RATE, MAX_UPDATE_RATE)),
@@ -239,7 +244,7 @@ def effective_settings(global_settings: dict[str, Any], overrides: Any) -> dict[
         for key in OVERRIDABLE_SETTINGS:
             if key in overrides:
                 merged[key] = overrides[key]
-    return normalize_settings(merged)
+    return normalize_settings(merged, lab_config=global_settings.get("lab"))
 
 
 def normalize_sources(raw: Any) -> list[dict[str, Any]]:
@@ -355,6 +360,14 @@ def normalize_profile_config(raw: Any) -> dict[str, Any]:
         name = str(preset.get("name") or preset_id).strip()[:80] or preset_id
         global_settings = normalize_settings(preset.get("global"))
         lights = normalize_lights(preset.get("lights"), global_settings)
+        for key in ("echo_lights", "auto_lights"):
+            global_settings["lab"][key] = [e for e in global_settings["lab"][key] if e in lights]
+        for _, key, _ in LIGHT_RULES:
+            global_settings["lab"][key] = {
+                entity: rule for entity, rule in global_settings["lab"][key].items() if entity in lights
+            }
+        for item in global_settings["lab"]["imports"]:
+            item["lights"] = [e for e in item["lights"] if e in lights]
         presets[preset_id] = {
             "name": name,
             "global": global_settings,

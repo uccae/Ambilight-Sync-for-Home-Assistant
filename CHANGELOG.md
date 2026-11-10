@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.0
+
+- Add Lab with pause response, unchanged-color blending and Color Echo.
+- Adjust light command rates continuously with Scene Dynamics 2.0. Shorten hardware transitions on brightness jumps with Auto response.
+- Add brightness gamma and RGB balance, with shared settings and per-light overrides.
+- Import configurable JSON or ZIP effects and behaviors. Auto response honors short transitions set manually, on scene cuts, or by an imported effect.
+- Choose how Sync responds to external light changes.
+
+Lab features are optional and stored per preset. Existing presets, light assignments and room coordinates carry over.
+
 ## 0.5.2
 
 - Add opt-in inactivity handling: keep normal behavior, reduce polling, or stop Sync after continuous black frames.
@@ -9,6 +19,8 @@
 - Show connection/last-response diagnostics and skip processing of completed black frames safely.
 
 Existing presets and room positions are preserved. Do nothing remains the default. Restart Home Assistant after updating.
+
+Physical network/device verification is still needed; discovery depends on a saved stable identifier and SSDP reachability.
 
 
 ## 0.5.1

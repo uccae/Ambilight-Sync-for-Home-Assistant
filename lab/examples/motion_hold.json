@@ -1,0 +1,23 @@
+{
+  "format": "ambilight_sync.effect",
+  "version": 1,
+  "api": 1,
+  "id": "motion_hold",
+  "name": "Motion Hold",
+  "author": "Ambilight Sync examples",
+  "description": "Temporarily releases output while the selected motion sensor is on.",
+  "kind": "behavior",
+  "inputs": {
+    "motion": {
+      "label": "Motion sensor",
+      "default": ""
+    }
+  },
+  "when": "i_motion == 1",
+  "operations": [
+    {
+      "type": "hold",
+      "value": "1"
+    }
+  ]
+}

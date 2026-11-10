@@ -48,6 +48,11 @@ async def _store_profile_update(
             existing = current["presets"].get(preset_id, {})
             if "rendering" in existing:
                 preset["rendering"] = deepcopy(existing["rendering"])
+        if isinstance(preset, dict) and isinstance(preset.get("global"), dict):
+            existing = current["presets"].get(preset_id, {}).get("global", {})
+            for key in ("lab", "external_control", "external_timeout", "external_transition"):
+                if key not in preset["global"] and key in existing:
+                    preset["global"][key] = deepcopy(existing[key])
     normalized = normalize_profile_config(profile_config)
     options = dict(entry.options)
     old_options = dict(entry.options)

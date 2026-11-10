@@ -33,8 +33,10 @@ def command_data(entity_id: str, state: Any, rgb, brightness: int, transition: f
         data["rgb_color"] = rgb  # HA converts RGB to the supported native mode.
     if caps["brightness"]:
         data["brightness"] = brightness
-    if caps["transition"] and transition > 0:
-        data["transition"] = transition
+    if caps["transition"]:
+        # Zero is an explicit request. Omitting it may reapply an HA light
+        # profile's default transition instead of disabling the device fade.
+        data["transition"] = max(0.0, transition)
     return data
 
 
@@ -59,8 +61,8 @@ def snapshot_data(entity_id: str, state: Any, snapshot: Any, transition: float =
     effects = state.attributes.get("effect_list", []) if state is not None else []
     if attrs.get("effect") in effects:
         data["effect"] = attrs["effect"]
-    if transition > 0 and caps["transition"]:
-        data["transition"] = transition
+    if caps["transition"]:
+        data["transition"] = max(0.0, transition)
     return data
 
 

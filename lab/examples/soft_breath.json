@@ -1,0 +1,30 @@
+{
+  "format": "ambilight_sync.effect",
+  "version": 1,
+  "api": 1,
+  "id": "soft_breath",
+  "name": "Soft Breath",
+  "author": "Ambilight Sync examples",
+  "description": "Gently varies the brightness of the current Ambilight color.",
+  "kind": "effect",
+  "parameters": {
+    "period": {
+      "label": "Period (s)",
+      "min": 2,
+      "max": 30,
+      "default": 8
+    },
+    "depth": {
+      "label": "Depth",
+      "min": 0,
+      "max": 1,
+      "default": 0.2
+    }
+  },
+  "operations": [
+    {
+      "type": "brightness_scale",
+      "value": "1-p_depth*(0.5+0.5*sin(time*6.283185/p_period))"
+    }
+  ]
+}

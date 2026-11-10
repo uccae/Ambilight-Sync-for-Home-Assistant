@@ -11,7 +11,6 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
 
 from .config_model import (
-    CONF_PROFILE_CONFIG,
     OVERRIDABLE_SETTINGS,
     active_preset,
     normalize_profile_config,
@@ -27,6 +26,7 @@ from .profile_store import (
     ProfileConflictError, profile_lock, profile_revision, store_profile, store_profile_locked,
 )
 from .backup import export_backup, prepare_import, apply_import
+from .effects import parse_import
 
 _FLAG = "_sidebar_websocket_registered"
 
@@ -124,7 +124,7 @@ def async_register_websocket(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_save_profile_config)
     websocket_api.async_register_command(hass, ws_activate_preset)
     websocket_api.async_register_command(hass, ws_save_config_legacy)
-    for command in (ws_identify, ws_participating, ws_copy_settings, ws_export_backup, ws_preview_backup, ws_import_backup):
+    for command in (ws_identify, ws_participating, ws_copy_settings, ws_export_backup, ws_preview_backup, ws_import_backup, ws_preview_effects):
         websocket_api.async_register_command(hass, command)
     domain_data[_FLAG] = True
 
@@ -527,3 +527,15 @@ async def ws_save_config_legacy(
         return
 
     connection.send_result(msg["id"], _serialize_entry(hass, entry))
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command({vol.Required("type"): "ambilight_sync/preview_effects", vol.Required("filename"):vol.All(str,vol.Length(max=160)), vol.Required("data"):vol.All(str,vol.Length(max=180000))})
+@websocket_api.async_response
+async def ws_preview_effects(hass, connection, msg):
+    """Validate a package without saving settings or running any effects."""
+    try:
+        definitions = parse_import(msg["filename"],msg["data"])
+        connection.send_result(msg["id"], {"effects":definitions,"api":1})
+    except (ValueError,TypeError,RecursionError) as exc:
+        connection.send_error(msg["id"],"invalid_format",str(exc))

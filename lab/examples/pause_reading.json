@@ -1,0 +1,43 @@
+{
+  "format": "ambilight_sync.effect",
+  "version": 1,
+  "api": 1,
+  "id": "pause_reading",
+  "name": "Pause Reading",
+  "author": "Ambilight Sync examples",
+  "description": "Brighter, less saturated lighting when the selected player is paused.",
+  "kind": "behavior",
+  "parameters": {
+    "level": {
+      "label": "Brightness (%)",
+      "min": 1,
+      "max": 100,
+      "default": 50
+    }
+  },
+  "inputs": {
+    "player": {
+      "label": "Media player",
+      "default": ""
+    }
+  },
+  "when": "i_player == 'paused'",
+  "operations": [
+    {
+      "type": "saturation",
+      "value": "25"
+    },
+    {
+      "type": "brightness",
+      "value": "p_level"
+    },
+    {
+      "type": "rate",
+      "value": "2"
+    },
+    {
+      "type": "transition",
+      "value": ".2"
+    }
+  ]
+}

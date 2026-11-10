@@ -11,11 +11,15 @@ from .ambient import BEHAVIORS
 from .config_model import (CONF_PROFILE_CONFIG, OVERRIDABLE_SETTINGS, normalize_profile_config,
                            normalize_settings, profile_config_from_entry)
 from .const import DOMAIN, ZONES
+from .lab import DEFAULTS, LIGHT_RULES, RANGES
 from .profile_store import ProfileConflictError, profile_lock, profile_revision
 from .room_store import ENTITY, RoomStore, get_room_store, revision
 
 FORMAT = "ambilight_sync.backup"
 MAX_BYTES = 512_000
+LEGACY_DYNAMICS = {"dynamics_strength": (0, 100), "dynamics_min_ms": (20, 2000), "dynamics_max_ms": (20, 2000)}
+LEGACY_LAB_KEYS = {"auto_mode", *LEGACY_DYNAMICS}
+LAMP_RULE_KEYS = {lights_key for _, lights_key, _ in LIGHT_RULES}
 
 
 def strip_geometry(profile):
@@ -52,6 +56,43 @@ def _finite(value):
             _finite(item)
 
 
+def _valid_rule_numbers(rule, ranges):
+    if rule.keys() - ranges.keys():
+        return False
+    for key, value in rule.items():
+        _, low, high = ranges[key]
+        if type(value) not in (int, float) or not low <= value <= high:
+            return False
+    return "calm_rate" not in rule or rule["calm_rate"] <= rule["active_rate"]
+
+
+def _valid_light_rules(lab):
+    for common_key, lights_key, ranges in LIGHT_RULES:
+        if common_key in lab:
+            common = lab[common_key]
+            if not isinstance(common, dict) or common.keys() != ranges.keys() or not _valid_rule_numbers(common, ranges):
+                return False
+        rules = lab.get(lights_key, {})
+        if not isinstance(rules, dict):
+            return False
+        for rule in rules.values():
+            if not isinstance(rule, dict):
+                return False
+            if lights_key != "auto_light_settings":
+                if type(rule.get("enabled")) is not bool:
+                    return False
+                numeric = {key: value for key, value in rule.items() if key != "enabled"}
+                if numeric and numeric.keys() != ranges.keys():
+                    return False
+            else:
+                numeric = rule
+                if not {"brightness_step", "transition_step"} <= numeric.keys():
+                    return False
+            if not _valid_rule_numbers(numeric, ranges):
+                return False
+    return True
+
+
 def validate_profile(raw):
     if not isinstance(raw, dict) or set(raw) != {"schema_version", "active_preset", "presets"}:
         raise ValueError("Invalid profile format")
@@ -70,7 +111,18 @@ def validate_profile(raw):
             for k, v in settings.items():
                 if k in ("restore_on_stop", "restore_on_inactivity_stop"):
                     valid = type(v) is bool
-                elif k in ("source", "color_mode", "inactivity_mode"):
+                elif k == "lab":
+                    valid = (
+                        isinstance(v, dict)
+                        and not set(v) - DEFAULTS.keys() - LEGACY_LAB_KEYS
+                        and ("auto_mode" not in v or v["auto_mode"] in ("software", "native"))
+                        and all(type(v[key]) in (int, float) and low <= v[key] <= high
+                                for key, (low, high) in LEGACY_DYNAMICS.items() if key in v)
+                        and all(type(v[key]) in (int, float) for key in RANGES if key in v)
+                        and all(type(v[key]) is bool for key in DEFAULTS if type(DEFAULTS[key]) is bool and key in v)
+                        and _valid_light_rules(v)
+                    )
+                elif k in ("source", "color_mode", "inactivity_mode", "external_control"):
                     valid = isinstance(v, str)
                 else:
                     valid = type(v) in (int, float)
@@ -106,7 +158,15 @@ def validate_profile(raw):
     # Strict settings validation prevents silent deletion/clamping on import.
     for key, p in presets.items():
         n = normalized["presets"][key]
-        if p["global"] != n["global"] or p["lights"] != n["lights"]:
+        settings = p["global"]
+        lab = settings.get("lab", {})
+        invalid = any(value != n["global"][key] for key, value in settings.items() if key != "lab")
+        invalid_lab = any(
+            value != n["global"]["lab"][key]
+            for key, value in lab.items() if key not in LEGACY_LAB_KEYS | LAMP_RULE_KEYS
+        )
+        unknown_lamp = any(lab.get(key, {}).keys() - p["lights"].keys() for key in LAMP_RULE_KEYS)
+        if invalid or invalid_lab or unknown_lamp or p["lights"] != n["lights"]:
             raise ValueError("Invalid or out-of-range settings")
     return normalized
 
@@ -168,6 +228,14 @@ def prepare_import(hass, payload, devices, entities):
     for profile in profiles.values():
         for p in profile["presets"].values():
             p["lights"] = {mapping[e]: v for e, v in p["lights"].items() if mapping[e] is not None}
+            for key in ("echo_lights", "auto_lights"):
+                p["global"]["lab"][key] = [mapping[e] for e in p["global"]["lab"][key] if mapping.get(e) is not None]
+            for _, key, _ in LIGHT_RULES:
+                p["global"]["lab"][key] = {
+                    mapping[e]: rule for e, rule in p["global"]["lab"][key].items() if mapping.get(e) is not None
+                }
+            for item in p["global"]["lab"]["imports"]:
+                item["lights"] = [mapping[e] for e in item["lights"] if mapping.get(e) is not None]
             p["rendering"].pop("room", None)
     def remap(points):
         return {mapping[e]: p for e, p in points.items() if mapping[e] is not None}

@@ -14,6 +14,7 @@ The integration reads colors directly from the TV over your local network. It ne
 
 - **Extend the screen into the room.** Use Classic zone mapping or place your TV and lights in an Ambient 3D layout.
 - **Tune each light.** Set its update rate, brightness, saturation, transitions and color sources independently.
+- **Experiment with lighting.** Fine-tune colors, adapt transitions to scene activity, and create custom lighting effects using Lab.
 - **Save different moods.** Create presets and switch between them from the panel or Home Assistant automations.
 - **Handle dark scenes gently.** Configure dimming, a brightness floor and a delayed switch-off.
 - **Keep control.** Temporarily exclude a light from Sync, identify it in the room editor, and restore its previous state when Sync stops.
@@ -95,6 +96,23 @@ Start with the default preset. For smoother lighting, first adjust the **light u
 - **Software smoothing** can soften updates when a device's native transitions are not enough.
 
 Global settings apply to every light unless you enable an individual override. Presets store settings and light assignments; room positions are shared. Settings can also be copied between lights, with capability checks.
+
+### Lab: color correction, dynamics and effects
+
+**Lab** brings additional lighting controls and creative effects to both Classic and Ambient engines. Each feature is optional, can be configured independently, and is saved with your presets.
+
+- **Color correction** — Fine-tune brightness with gamma adjustment and balance individual RGB channels. Apply settings globally or customize them for individual lights.
+- **Scene Dynamics 2.0** — Automatically adapts light update rates and hardware transitions to changes in Ambilight colors. Calmer scenes can use slower, smoother transitions, while more active scenes receive faster updates.
+- **Auto-response** — Shortens hardware transitions during significant brightness changes, helping lights react more quickly without sacrificing smoothness during smaller adjustments.
+- **Color Echo** — Adds subtle traces of colors from recent scenes, creating a more continuous lighting atmosphere.
+- **Original color blending** — Mixes in a portion of each light's pre-sync color during sustained Ambilight output.
+- **Pause reaction** — Adjusts brightness and saturation when playback is paused, using a Home Assistant media player, sensor, or switch.
+- **Custom effects** — Import effects from JSON or ZIP packages. Effects can modify colors, brightness, update rates, and transitions. Imported effects remain disabled until reviewed, configured, and enabled. See the [Effects API documentation](lab/EFFECT_API.md) for details.
+
+
+Where supported, individual lights can use their own settings or be excluded from specific Lab features.
+
+Lab effects respect existing dark-scene handling, synchronization stops, and manual light control.
 
 ### Dark scenes and inactivity
 

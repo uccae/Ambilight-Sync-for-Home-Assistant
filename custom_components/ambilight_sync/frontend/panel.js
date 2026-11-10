@@ -123,7 +123,7 @@ const TEXT = {
     inherited: "из общих",
     save: "Применить изменения",
     saving: "Сохраняю…",
-    saved: "Изменения применены",
+    saved: "Изменения сохранены",
     activated: "Активировано",
     loadError: "Не удалось загрузить настройки",
     saveError: "Не удалось сохранить настройки",
@@ -257,7 +257,7 @@ const TEXT = {
     inherited: "global",
     save: "Apply changes",
     saving: "Saving…",
-    saved: "Changes applied",
+    saved: "Changes saved",
     activated: "Activated",
     loadError: "Could not load settings",
     saveError: "Could not save settings",
@@ -272,6 +272,7 @@ const TEXT = {
 const ZONES = ["left", "right", "top", "bottom", "all", "left_corners", "right_corners", "top_corners", "bottom_corners"];
 const OVERRIDES = ["color_mode", "update_rate", "transition", "smoothing", "brightness", "minimum_brightness", "saturation", "threshold", "black_threshold", "black_hold_ms", "fade_to_black", "off_delay", "scene_cut_threshold", "scene_cut_transition", "corner_influence"];
 const RANGE_META = {
+  external_timeout: [5, 3600, 5, "sec"], external_transition: [.1, 10, .1, "sec"],
   inactivity_timeout: [1, 86400, 1, "sec"], inactive_poll_rate: [0.25, 30, 0.25, "hz"], restore_transition: [0, 5, 0.1, "sec"],
   intensity: [50, 400, 1, "percent"], neutral_strength: [0, 100, 5, "percent"], neutral_noise_floor: [0, 8, 0.25, ""],
   poll_rate: [0.25, 30, 0.25, "hz"], update_rate: [0.25, 30, 0.25, "hz"], transition: [0, 2, 0.1, "sec"], smoothing: [0, 95, 5, "percent"],
@@ -289,7 +290,30 @@ const ROOM_TOOL_ICONS = {
 };
 const GLOBAL_RANGES = Object.keys(RANGE_META);
 OVERRIDES.push("intensity");
-const NEW_DEFAULTS = {intensity: 100, neutral_strength: 100, neutral_noise_floor: 3, inactivity_timeout: 60, inactive_poll_rate: 1, restore_transition: 1.5};
+const NEW_DEFAULTS = {external_timeout:60, external_transition:2,intensity: 100, neutral_strength: 100, neutral_noise_floor: 3, inactivity_timeout: 60, inactive_poll_rate: 1, restore_transition: 1.5};
+
+const PANEL_VERSION = "0.6.0";
+const SAVE_NOTICE_MS = 1400;
+const SAVE_EXIT_MS = 200;
+const LAB_DEFAULTS = {dynamics_enabled:false,dynamics_settings:{},dynamics_light_settings:{},auto_enabled:false,auto_settings:{},auto_lights:[],auto_light_settings:{},calibration_enabled:false,calibration_settings:{},calibration_light_settings:{},imports:[],pause_enabled:false,pause_entity:"",pause_delay:2,pause_saturation:30,pause_brightness:40,pause_transition:3,static_enabled:false,static_timeout:30,static_tolerance:2,static_mix:50,static_transition:3,echo_enabled:false,echo_seconds:5,echo_strength:35,echo_lights:[]};
+const LAB_LIGHT_RULES = {
+  auto: {commonKey: "auto_settings", lightsKey: "auto_light_settings", fields: {
+    brightness_step: {defaultValue: 20, min: 1, max: 100, step: 1},
+    transition_step: {defaultValue: 0.1, min: 0.01, max: 2, step: 0.01},
+    scene_transition_step: {defaultValue: 12.5, min: 0, max: 100, step: 0.5},
+  }},
+  scene: {commonKey: "dynamics_settings", lightsKey: "dynamics_light_settings", fields: {
+    calm_rate: {defaultValue: 0.5, min: 0.25, max: 10, step: 0.05},
+    active_rate: {defaultValue: 4, min: 0.25, max: 10, step: 0.05},
+  }},
+  calibration: {commonKey: "calibration_settings", lightsKey: "calibration_light_settings", fields: {
+    gamma: {defaultValue: 1, min: 0.5, max: 3, step: 0.05},
+    red_gain: {defaultValue: 100, min: 50, max: 150, step: 1},
+    green_gain: {defaultValue: 100, min: 50, max: 150, step: 1},
+    blue_gain: {defaultValue: 100, min: 50, max: 150, step: 1},
+  }},
+};
+const LAB_RANGES = {pause_delay:[0,60,1,"sec"],pause_saturation:[0,100,1,"percent"],pause_brightness:[1,100,1,"percent"],pause_transition:[.1,10,.1,"sec"],static_timeout:[5,600,1,"sec"],static_tolerance:[0,10,.5,"percent"],static_mix:[0,100,1,"percent"],static_transition:[.1,10,.1,"sec"],echo_seconds:[1,15,.5,"sec"],echo_strength:[0,100,1,"percent"]};
 
 class AmbilightSyncPanel extends HTMLElement {
   constructor() {
@@ -304,6 +328,10 @@ class AmbilightSyncPanel extends HTMLElement {
     this._tvPreview = null;
     this._loading = false;
     this._saving = false;
+    this._discarding = false;
+    this._saveNotice = null;
+    this._saveNoticeTimer = null;
+    this._saveFailure = null;
     this._toggling = false;
     this._statusTimer = null;
     this._tvPreviewTimer = null;
@@ -399,6 +427,8 @@ class AmbilightSyncPanel extends HTMLElement {
     this._statusRequest = null;
     this._configRequest = null;
     this._cancelRoomPreview();
+    this._clearSaveNotice();
+    this._syncSaveBar();
   }
 
   get t() {
@@ -423,6 +453,9 @@ class AmbilightSyncPanel extends HTMLElement {
       const entry = this.currentEntry;
       this._draft = entry ? clone(entry) : null;
       this._draftRevision++;
+      this._dirty = false;
+      this._clearSaveNotice();
+      this._saveFailure = null;
       this._requestError = null;
       this._connectionError = null;
       this._conflict = false;
@@ -927,8 +960,13 @@ class AmbilightSyncPanel extends HTMLElement {
       ${section("dark", t.darkScenes, `<p class="section-note">${esc(t.darkShort)}</p>` + range("black_threshold", t.blackThreshold, t.blackThresholdDesc) + range("black_hold_ms", t.blackHold, t.blackHoldDesc) + range("fade_to_black", t.fadeBlack, t.fadeBlackDesc) + range("off_delay", t.offDelay, t.offDelayDesc))}
       ${section("cuts", t.sceneCuts, range("scene_cut_threshold", t.sceneCutThreshold, t.sceneCutThresholdDesc) + range("scene_cut_transition", t.sceneCutTransition, t.sceneCutTransitionDesc))}
       ${section("spatial", t.spatialSettings, range("corner_influence", t.cornerInfluence) + `<p class="section-note">${esc(t.spatialSettingsDesc)}</p>`)}
-    </section>
-    <button id="debug-toggle" class="secondary" type="button" aria-expanded="${this._debugVisible}" aria-controls="debug-settings">Debug</button>
+    </section>`;
+  }
+
+  _debugMarkup(g, status) {
+    const t = this.t;
+    const range = (key, label, help = "") => this._range(key, label, g[key] ?? NEW_DEFAULTS[key], help ? esc(help) : "");
+    return `<button id="debug-toggle" class="secondary" type="button" aria-expanded="${this._debugVisible}" aria-controls="debug-settings">Debug</button>
     <section id="debug-settings" class="debug-settings card" ${this._debugVisible ? "" : "hidden"}><strong>${esc(t.debug)}</strong><p>${esc(t.debugHint)}</p><div class="section-controls">
       ${range("neutral_strength", t.neutralStrength, t.neutralStrengthDesc)}${range("neutral_noise_floor", t.neutralNoise, t.neutralNoiseDesc)}
       <div class="inactivity-settings"><h3>${esc(this._label("Бездействие", "Inactivity handling"))}</h3><div class="section-controls">
@@ -940,6 +978,7 @@ class AmbilightSyncPanel extends HTMLElement {
       <div class="connection-debug"><strong>${esc(this._label("Соединение с TV", "TV connection"))}</strong><pre id="connection-debug"></pre></div>
       <button id="debug-reset" class="secondary" type="button">${esc(t.debugReset)}</button>
       <div class="debug-pipeline"><strong>${esc(t.debugPipeline)}</strong><select id="debug-light" aria-label="${esc(t.diagnostics)}">${Object.keys(this.currentPreset?.lights || {}).map((id) => `<option value="${esc(id)}" ${this._debugLight === id ? "selected" : ""}>${esc(this._lightName(id))}</option>`).join("")}</select><pre id="debug-pipeline">${esc(t.debugWaiting)}</pre></div>
+      <div class="debug-diagnostics"><div class="diagnostics-heading"><h2>${esc(t.diagnostics)}</h2><span class="eyebrow">${esc(t.tvDiagnostics)}</span></div><p id="tv-diagnostics">${esc(t.targetRate)} ${status?.diagnostics?.tv?.target_poll_rate_hz ?? g.poll_rate} Hz · ${esc(t.actualRate)} ${status?.diagnostics?.tv?.actual_poll_rate_hz ?? 0} Hz</p><p id="renderer-diagnostics">${esc(status?.diagnostics?.rendering?.active_mode || "classic")}</p><p>${esc(t.serviceHint)}</p></div>
     </div></section>`;
   }
 
@@ -1082,7 +1121,8 @@ class AmbilightSyncPanel extends HTMLElement {
 
     return `<section class="light-card" data-light-card data-entity="${esc(entityId)}">
       <div class="light-head"><div class="preview-dot" data-preview="${esc(entityId)}" style="background:rgb(${rgb.join(",")})"></div><div class="light-name"><strong title="${esc(this._lightName(entityId))}">${esc(this._lightName(entityId))}</strong></div><div class="light-actions"><details class="light-menu"><summary aria-label="${esc(this._label("Действия со светильником","Light actions"))}">⋯</summary><button type="button" data-copy-settings="${esc(entityId)}">${esc(this._label("Копировать настройки","Copy Settings"))}</button></details><button class="remove-light" data-remove-light="${esc(entityId)}" title="${esc(t.removeLight)}" aria-label="${esc(t.removeLight)}: ${esc(this._lightName(entityId))}">×</button></div></div>
-      <label class="check-row participation-row"><input type="checkbox" data-participating="${esc(entityId)}" ${this._lastStatus?.excluded?.includes(entityId)?"":"checked"}><span>${esc(this._label("Участвует в синхронизации","Participates in synchronization"))}</span></label>
+      <div class="effect-status help" data-effect-status="${esc(entityId)}" role="status"></div>
+      <label class="check-row participation-row"><input type="checkbox" data-participating="${esc(entityId)}" ${(this._lastStatus?.excluded?.includes(entityId)||diag?.external_control)?"":"checked"}><span>${esc(this._label("Участвует в синхронизации","Participates in synchronization"))}</span></label>
       <details class="light-diagnostics disclosure"><summary>${esc(t.diagnostics)}</summary><small>${esc(entityId)}</small>
       <div class="preview-line"><span>${esc(t.preview)}</span><span data-preview-text="${esc(entityId)}">${esc(previewText)}</span></div>
       <div class="diagnostic-line"><span>${esc(t.diagnostics)}</span><span data-diagnostics-text="${esc(entityId)}">${esc(diagText)}</span></div>
@@ -1133,9 +1173,25 @@ class AmbilightSyncPanel extends HTMLElement {
     if (!preset || !this.shadowRoot?.getElementById("update_rate")) return;
     const root = this.shadowRoot;
     const g = preset.global;
-    for (const key of ["source", "color_mode", "inactivity_mode"]) {
+    g.lab = {...LAB_DEFAULTS, ...(g.lab || {})};
+    root.querySelectorAll("[data-lab-key]").forEach(input=>{
+      if(!input.dataset.edited)return;
+      const key=input.dataset.labKey;
+      g.lab[key]=input.type==="checkbox"?input.checked:input.type==="number"?Number(input.value):input.value;
+    });
+    if(root.querySelector("[data-echo-light][data-edited]"))g.lab.echo_lights=[...root.querySelectorAll("[data-echo-light]:checked")].map(input=>input.dataset.echoLight);
+    this._readLabLightRules(g.lab);
+    g.lab.imports ||= [];
+    root.querySelectorAll("[data-custom-id]").forEach(card=>{
+      const item=g.lab.imports.find(i=>i.definition.id===card.dataset.customId);if(!item)return;
+      const enabled=card.querySelector("[data-custom-enabled]");if(enabled?.dataset.edited)item.enabled=enabled.checked;
+      card.querySelectorAll("[data-effect-param][data-edited]").forEach(input=>item.parameters[input.dataset.effectParam]=Number(input.value));
+      card.querySelectorAll("[data-effect-input][data-edited]").forEach(input=>item.inputs[input.dataset.effectInput]=input.value);
+      if(card.querySelector("[data-effect-light][data-edited]"))item.lights=[...card.querySelectorAll("[data-effect-light]:checked")].map(input=>input.dataset.effectLight);
+    });
+    for (const key of ["source", "color_mode", "inactivity_mode", "external_control"]) {
       const input = root.getElementById(key);
-      if (input.dataset.edited) g[key] = input.value;
+      if (input?.dataset.edited) g[key] = input.value;
     }
     GLOBAL_RANGES.forEach((key) => {
       const input = root.getElementById(key);
@@ -1227,7 +1283,7 @@ class AmbilightSyncPanel extends HTMLElement {
   _removeSource(entityId,index) { this._readCurrentPresetControls(); const l=this.currentPreset?.lights?.[entityId]; if(!l) return; if((l.sources||[]).length<=1) return; l.sources.splice(index,1); this._markDirty(); this._render(); }
 
   async _save(activate = false) {
-    if (!this.currentEntry || !this.profile || this._saving) return;
+    if (!this.currentEntry || !this.profile || this._saving || this._discarding) return;
     if(this.currentPreset?.rendering?.mode === "ambient") {
       const invalid=this.shadowRoot.querySelector("[data-room-value]:invalid, [data-room-tv]:invalid");
       if(invalid){invalid.reportValidity();return;}
@@ -1242,7 +1298,9 @@ class AmbilightSyncPanel extends HTMLElement {
     const room=this._draft.room ? clone(this._draft.room) : null,roomRevision=this._draft.room_revision;
     this._saving = true;
     this._requestError = null;
-    this._setSaveState(this.t.saving, true);
+    this._saveFailure = null;
+    this._clearSaveNotice();
+    this._syncSaveBar();
     try {
       const updated = await this._hass.connection.sendMessagePromise({ type:"ambilight_sync/save_profile_config", entry_id:entryId, profile_config:payload, expected_revision:expectedRevision, ...(room?{room,room_revision:roomRevision}:{}) });
       const idx = this._entries.findIndex((e) => e.entry_id === updated.entry_id);
@@ -1264,6 +1322,11 @@ class AmbilightSyncPanel extends HTMLElement {
           if (output) output.textContent = `${g[key] ?? NEW_DEFAULTS[key]}${unit ? ` ${unit}` : ""}`;
           this._syncRangeFill(input);
         }
+        this.shadowRoot.querySelectorAll("[data-lab-key]").forEach(input=>{const value=g.lab?.[input.dataset.labKey]??LAB_DEFAULTS[input.dataset.labKey];if(input.type==="checkbox")input.checked=!!value;else input.value=String(value);});
+        this.shadowRoot.querySelectorAll("[data-echo-light]").forEach(input=>input.checked=!!g.lab?.echo_lights?.includes(input.dataset.echoLight));
+        this._restoreLabLightRules(g.lab || LAB_DEFAULTS);
+        this.shadowRoot.querySelectorAll("[data-custom-id]").forEach(card=>{const item=g.lab?.imports?.find(i=>i.definition.id===card.dataset.customId);if(!item)return;card.querySelector("[data-custom-enabled]").checked=item.enabled;card.querySelectorAll("[data-effect-param]").forEach(input=>input.value=String(item.parameters[input.dataset.effectParam]));card.querySelectorAll("[data-effect-input]").forEach(input=>input.value=item.inputs[input.dataset.effectInput]||"");card.querySelectorAll("[data-effect-light]").forEach(input=>input.checked=item.lights.includes(input.dataset.effectLight));});
+        this._syncLabControls();
         this.shadowRoot.querySelectorAll("[data-edited]").forEach((input) => input.removeAttribute("data-edited"));
         this._syncDarkSceneUi();
         this._updateSettingsSummaries();
@@ -1286,21 +1349,18 @@ class AmbilightSyncPanel extends HTMLElement {
       if (!this.profile.presets[this._editPresetId]) this._editPresetId = this.profile.active_preset;
       this._updateStatusDom(updated.status);
       this._updateDiagnosticsDom(updated.status?.diagnostics || {});
-      this._setSaveState(activate ? this.t.activated : this.t.saved, false);
+      if (unchanged) this._showSaveNotice(activate ? this.t.activated : this.t.saved);
       this._updatePresetBadge();
-      window.setTimeout(() => {
-        if (this._entryId !== entryId || this._entryEpoch !== entryEpoch || this._saving) return;
-        this._setSaveState(this.t.save, false);
-        const footer = this.shadowRoot?.querySelector(".actions");
-        if (footer && !this._dirty && !this._saving) footer.hidden = true;
-      }, 1400);
     } catch (err) {
       if (this._entryId !== entryId || this._entryEpoch !== entryEpoch) return;
       if (err?.code === "conflict") this._conflict = true;
       this._requestError = this._conflict ? this._conflictText() : `${this.t.saveError}: ${err?.message || err}`;
-      this._setSaveState(this._requestError, false, true);
+      this._saveFailure = this._requestError;
       this._updateStatusDom(this._lastStatus);
-    } finally { this._saving = false; }
+    } finally {
+      this._saving = false;
+      this._syncSaveBar();
+    }
   }
 
   async _refreshStatus() {
@@ -1359,6 +1419,7 @@ class AmbilightSyncPanel extends HTMLElement {
       if (!this.profile.presets[this._editPresetId]) this._editPresetId = this.profile.active_preset;
       this._lastStatus = updated.status;
       this._requestError = null;
+      this._saveFailure = null;
       this._conflict = false;
       this._render();
     } finally {
@@ -1383,7 +1444,7 @@ class AmbilightSyncPanel extends HTMLElement {
   }
 
   _updateStatusDom(status) {
-    this.shadowRoot?.querySelectorAll("[data-participating]").forEach(input=>{if(!input.disabled)input.checked=!status?.excluded?.includes(input.dataset.participating);});
+    this.shadowRoot?.querySelectorAll("[data-participating]").forEach(input=>{if(!input.disabled)input.checked=!status?.excluded?.includes(input.dataset.participating)&&!status?.diagnostics?.lights?.[input.dataset.participating]?.external_control;});
     const state = this.shadowRoot?.getElementById("sync-status");
     const toggle = this.shadowRoot?.getElementById("sync-toggle");
     const error = this.shadowRoot?.getElementById("status-error");
@@ -1469,6 +1530,41 @@ class AmbilightSyncPanel extends HTMLElement {
   }
 
   _updateDiagnosticsDom(diagnostics) {
+    const labels={dynamics:"Scene Dynamics",auto:this._label("Автоотклик","Auto response"),calibration:this._label("Цветокоррекция","Color correction"),pause:this._label("Пауза","Pause"),static:this._label("Неизменные цвета","Unchanged colors"),echo:"Color Echo",external:this._label("Ручное управление","Manual control")};
+    for(const [entity,diag] of Object.entries(diagnostics?.lights||{})){
+      const card=this._lightNodes.get(entity)?.card;
+      const text=card?.querySelector("[data-effect-status]");
+      if(text)text.textContent=(diag.effects||[]).map(key=>key.startsWith("custom:")?(this.currentPreset?.global?.lab?.imports?.find(i=>i.definition.id===key.slice(7))?.definition.name||key.slice(7)):labels[key]||key).join(" · ");
+      const participation=card?.querySelector("[data-participating]");
+      if(participation&&!participation.disabled)participation.checked=!diag.external_control&&!this._lastStatus?.excluded?.includes(entity);
+    }
+    const labStatus=this.shadowRoot?.getElementById("lab-status");
+    if(labStatus){const lab=diagnostics?.lab;labStatus.textContent=lab?`${this._label("Источник паузы","Pause source")}: ${lab.media_state} · ${this._label("Пауза","Pause")} ${Math.round(lab.pause*100)}% · ${this._label("Неизменные цвета","Unchanged colors")} ${Math.round(lab.static*100)}%`:this._label("Статус появится при работе Sync","Status appears while Sync is running");}
+
+    const activePreset = this.profile?.active_preset === this._editPresetId;
+    const scene = activePreset ? diagnostics?.scene_dynamics : null;
+    const dynamics = this.shadowRoot.getElementById("dynamics-status");
+    const format = new Intl.NumberFormat(this.t === TEXT.ru ? "ru" : "en", {maximumFractionDigits: 3});
+    const hz = this._label("Гц", "Hz");
+    if (dynamics) {
+      dynamics.hidden = !Number.isFinite(scene?.common_rate_hz);
+      if (!dynamics.hidden) {
+        const activity = Math.round(scene.activity * 100);
+        dynamics.querySelector("progress").value = activity;
+        dynamics.querySelector("[data-lab-activity]").textContent = `${activity}%`;
+        dynamics.querySelector("[data-lab-common-rate]").textContent = `${format.format(scene.common_rate_hz)} ${hz} · ${format.format(scene.common_transition_s)} ${this.t.sec}`;
+      }
+    }
+    for (const output of this.shadowRoot.querySelectorAll("[data-lab-light-status]")) {
+      const id = output.closest("[data-lab-lamp]").dataset.labLamp;
+      const state = activePreset ? diagnostics?.lights?.[id] : null;
+      if (output.dataset.labLightStatus === "scene") {
+        output.textContent = state?.scene_rate_hz == null ? "" : `${format.format(state.scene_rate_hz)} ${hz} · ${format.format(state.scene_transition_s)} ${this.t.sec}`;
+      } else {
+        output.textContent = state?.auto_transition_s == null ? "" : `${this._label("Последний переход", "Last transition")} · ${format.format(state.auto_transition_s)} ${this.t.sec}`;
+      }
+    }
+    for(const element of this.shadowRoot.querySelectorAll("[data-effect-error]")){const error=diagnostics?.extensions?.errors?.[element.dataset.effectError];element.textContent=error?this._label("Ошибка расширения: ","Extension error: ")+error:"";}
     const connection=this.shadowRoot?.getElementById("connection-debug"), connectionTv=diagnostics.tv||{};
     if(connection)connection.textContent=JSON.stringify({state:connectionTv.connection_state||"idle",host:connectionTv.host||"—",transport:connectionTv.color_transport||"—",last_successful_response:connectionTv.last_successful_response||"—",recovering:!!connectionTv.recovery_in_progress,effective_poll_rate_hz:connectionTv.effective_poll_rate_hz??connectionTv.target_poll_rate_hz,inactive:!!connectionTv.inactive,inactivity_seconds:Math.round(connectionTv.inactivity_seconds||0),last_stop_reason:connectionTv.last_stop_reason||"—"},null,2);
     const tv = diagnostics?.tv || {};
@@ -1498,35 +1594,85 @@ class AmbilightSyncPanel extends HTMLElement {
   _markDirty() {
     this._draftRevision++;
     this._dirty = true;
-    const footer = this.shadowRoot?.querySelector(".actions");
-    if (footer) footer.hidden = false;
+    this._clearSaveNotice();
+    this._syncSaveBar();
   }
 
-  _setSaveState(text, disabled, error=false) {
-    const btn = this.shadowRoot?.getElementById("save");
-    if (!btn) return;
-    const footer = btn.closest(".actions");
-    if (footer) footer.hidden = false;
-    btn.textContent = error?this.t.save:text; btn.disabled = disabled; btn.classList.toggle("save-error", error);
-    const discard=this.shadowRoot.getElementById("discard"),feedback=this.shadowRoot.getElementById("save-feedback");
-    if(discard)discard.disabled=disabled;
-    if(feedback){feedback.textContent=error?text:"";feedback.hidden=!error;}
+  _clearSaveNotice() {
+    window.clearTimeout(this._saveNoticeTimer);
+    this._saveNoticeTimer = null;
+    this._saveNotice = null;
+  }
+
+  _showSaveNotice(text) {
+    this._clearSaveNotice();
+    const notice = this._saveNotice = {text, leaving: false};
+    this._syncSaveBar();
+    const hide = () => {
+      if (this._saveNotice !== notice) return;
+      this._clearSaveNotice();
+      this._syncSaveBar();
+    };
+    this._saveNoticeTimer = window.setTimeout(() => {
+      if (this._saveNotice !== notice) return;
+      if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+        hide();
+      } else {
+        notice.leaving = true;
+        this._syncSaveBar();
+        this._saveNoticeTimer = window.setTimeout(hide, SAVE_EXIT_MS);
+      }
+    }, SAVE_NOTICE_MS);
+  }
+
+  _syncSaveBar() {
+    const root = this.shadowRoot;
+    const footer = root.querySelector(".actions");
+    if (!footer) return;
+    const notice = this._saveNotice;
+    const error = this._saveFailure;
+    const disabled = this._saving || this._discarding;
+    footer.hidden = !notice && !this._dirty && !this._saving && !error;
+    footer.toggleAttribute("data-leaving", Boolean(notice?.leaving));
+    footer.querySelector(".save-bar").toggleAttribute("data-confirmed", Boolean(notice));
+    footer.querySelector(".save-controls").hidden = Boolean(notice);
+    const message = root.getElementById("save-notice");
+    message.hidden = !notice;
+    if (message.textContent !== (notice?.text || "")) message.textContent = notice?.text || "";
+    const feedback = root.getElementById("save-feedback");
+    feedback.hidden = !error;
+    if (feedback.textContent !== (error || "")) feedback.textContent = error || "";
+    const save = root.getElementById("save");
+    const label = this._saving ? this.t.saving : this.t.save;
+    if (save.textContent !== label) save.textContent = label;
+    save.disabled = disabled;
+    save.classList.toggle("save-error", Boolean(error));
+    root.getElementById("discard").disabled = disabled;
   }
 
   async _discardDraft() {
     if(!this._dirty || this._saving || this._discarding)return;
     const entry=this._entryId,epoch=this._entryEpoch,version=this._draftRevision,preset=this._editPresetId;
-    this._discarding=true;this.shadowRoot.getElementById("discard").disabled=true;this.shadowRoot.getElementById("save").disabled=true;
+    this._discarding = true;
+    this._syncSaveBar();
     try{
       const data=await this._hass.connection.sendMessagePromise({type:"ambilight_sync/get_config"});
       if(entry!==this._entryId || epoch!==this._entryEpoch || version!==this._draftRevision || !this.isConnected)return;
       const updated=data.entries?.find(e=>e.entry_id===entry);if(!updated)throw Error(this.t.noEntries);
       this._clearRoomSelection();this._entries=data.entries;this._draft=clone(updated);this._draftRevision++;
       this._dirty=false;this._requestError=null;this._conflict=false;this._roomHistory=[];this._roomFuture=[];this._roomInputBefore=null;
+      this._saveFailure = null;
       this._editPresetId=this.profile.presets[preset]?preset:this.profile.active_preset;
       this._lastStatus=updated.status;this._render();
-    }catch(err){this._requestError=String(err?.message || err);this._setSaveState(this._requestError,false,true);}
-    finally{this._discarding=false;const save=this.shadowRoot.getElementById("save"),discard=this.shadowRoot.getElementById("discard");if(save)save.disabled=this._saving;if(discard)discard.disabled=this._saving;}
+    } catch (err) {
+      if (entry === this._entryId && epoch === this._entryEpoch) {
+        this._requestError = String(err?.message || err);
+        this._saveFailure = this._requestError;
+      }
+    } finally {
+      this._discarding = false;
+      this._syncSaveBar();
+    }
   }
 
   _updateRangeOutput(input) {
@@ -1580,7 +1726,7 @@ class AmbilightSyncPanel extends HTMLElement {
       });
     });
     const markInput = (event) => {
-      if (!event.target.matches("input, select") || event.target.closest("dialog") || event.target.matches("[data-participating]") || ["entry-select", "preset-select", "debug-light", "room-node", "backup-file", "room-alternate"].includes(event.target.id)) return;
+      if (!event.target.matches("input, select") || event.target.closest("dialog") || event.target.matches("[data-participating]") || ["entry-select", "preset-select", "debug-light", "room-node", "backup-file", "room-alternate", "effect-file"].includes(event.target.id)) return;
       event.target.dataset.edited = "true";
       this._markDirty();
     };
@@ -1591,6 +1737,11 @@ class AmbilightSyncPanel extends HTMLElement {
     this._draftInputListener = markInput;
     root.addEventListener("input", markInput);
     root.addEventListener("change", markInput);
+    root.querySelectorAll("[data-lab-key$='_enabled']").forEach(input=>input.addEventListener("change",()=>this._syncLabControls()));
+    this._wireLabLightRules();
+    root.getElementById("external_control")?.addEventListener("change",()=>this._syncLabControls());
+    this._syncLabControls();
+    this._wireEffectImports();
     root.querySelectorAll("[data-tab]").forEach((button) => {
       button.addEventListener("click", () => this._showTab(button.dataset.tab));
       button.addEventListener("keydown", (event) => {
@@ -1649,6 +1800,8 @@ class AmbilightSyncPanel extends HTMLElement {
       this._dirty = false;
       this._draftRevision++;
       this._requestError = null;
+      this._saveFailure = null;
+      this._clearSaveNotice();
       this._conflict = false;
       this._statusRequest = null;
       this._configRequest = null;
@@ -1740,7 +1893,7 @@ class AmbilightSyncPanel extends HTMLElement {
   }
 
   _showTab(tab) {
-    if (!["atmosphere", "lights", "settings"].includes(tab)) return;
+    if (!["atmosphere", "lights", "settings", "lab"].includes(tab)) return;
     if(tab!=="atmosphere")this._clearRoomSelection();
     this._tab = tab;
     this.shadowRoot.querySelectorAll("[data-tab]").forEach((button) => {
@@ -1794,7 +1947,261 @@ class AmbilightSyncPanel extends HTMLElement {
   }
 
   _brandMarkup() {
-    return `<header><div class="brand"><div class="logo" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><rect x="3" y="4" width="18" height="13" rx="3" stroke="currentColor" stroke-width="1.6"/><path d="M8 21h8m-4-4v4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></div><div class="head-copy"><h1>${esc(this.t.title)}</h1></div></div><span class="version" aria-label="${esc(this.t.version)} 0.5.2">0.5.2</span></header>`;
+    return `<header><div class="brand"><div class="logo" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><rect x="3" y="4" width="18" height="13" rx="3" stroke="currentColor" stroke-width="1.6"/><path d="M8 21h8m-4-4v4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></div><div class="head-copy"><h1>${esc(this.t.title)}</h1></div></div><span class="version" aria-label="${esc(this.t.version)} ${PANEL_VERSION}">${PANEL_VERSION}</span></header>`;
+  }
+
+  _syncLabControls() {
+    for(const name of ["pause","static","echo","dynamics","auto","calibration"]){
+      const enabled=this.shadowRoot.getElementById(`lab-${name}_enabled`)?.checked;
+      const fields=this.shadowRoot.getElementById(`lab-${name}-fields`);
+      if(fields)fields.hidden=!enabled;
+    }
+    const sceneOn = this.shadowRoot.getElementById("lab-dynamics_enabled")?.checked;
+    this.shadowRoot.querySelectorAll("[data-lab-with-scene]").forEach(field => field.hidden = !sceneOn);
+    for (const list of this.shadowRoot.querySelectorAll("[data-lab-light-list]")) {
+      const toggles = [...list.querySelectorAll("[data-lab-light-enabled]")];
+      const enabled = toggles.filter(input => input.checked).length;
+      list.querySelector("[data-lab-enabled-count]").textContent = `${enabled} ${this._label("из", "of")} ${toggles.length}`;
+      const bulk = list.querySelector("[data-lab-toggle-all]");
+      if (bulk) bulk.textContent = enabled === toggles.length
+        ? this._label("Выключить все", "Disable all") : this._label("Включить все", "Enable all");
+      for (const lamp of list.querySelectorAll("[data-lab-lamp]")) {
+        const custom = lamp.querySelector("[data-lab-light-custom]").checked;
+        lamp.querySelector("[data-lab-custom-fields]").hidden = !custom;
+        lamp.querySelector("[data-lab-rule-kind]").textContent = custom
+          ? this._label("Свои", "Custom") : this._label("Общие", "Shared");
+      }
+    }
+    const mode=this.shadowRoot.getElementById("external_control")?.value||"continue";
+    const options=this.shadowRoot.getElementById("external-options"),timeout=this.shadowRoot.getElementById("external-timeout-control");
+    if(options)options.hidden=mode==="continue";
+    if(timeout)timeout.hidden=mode!=="temporary";
+  }
+
+  _readLabLightRules(lab) {
+    const root = this.shadowRoot;
+    for (const [group, {commonKey, lightsKey, fields}] of Object.entries(LAB_LIGHT_RULES)) {
+      const readNumbers = (container, defaults) => Object.fromEntries(
+        [...container.querySelectorAll("[data-lab-rule-number]")].map(input => {
+          const key = input.dataset.labRuleNumber;
+          return [key, Number.isFinite(input.valueAsNumber) ? input.valueAsNumber : defaults?.[key] ?? fields[key].defaultValue];
+        })
+      );
+      const common = root.querySelector(`[data-lab-common="${group}"]`);
+      if (common?.querySelector("[data-lab-rule-number][data-edited]")) {
+        lab[commonKey] = readNumbers(common, lab[commonKey]);
+      }
+      const list = root.querySelector(`[data-lab-light-list="${group}"]`);
+      if (!list?.querySelector("[data-edited]")) continue;
+      if (group === "auto" && list.querySelector("[data-lab-light-enabled][data-edited]")) {
+        lab.auto_lights = [...list.querySelectorAll("[data-lab-light-enabled]:checked")]
+          .map(input => input.closest("[data-lab-lamp]").dataset.labLamp);
+      }
+      const rules = {...lab[lightsKey]};
+      for (const lamp of list.querySelectorAll("[data-lab-lamp]")) {
+        if (!lamp.querySelector("[data-edited]")) continue;
+        const id = lamp.dataset.labLamp;
+        const enabled = lamp.querySelector("[data-lab-light-enabled]").checked;
+        const custom = lamp.querySelector("[data-lab-light-custom]").checked;
+        if (custom || (group !== "auto" && !enabled)) {
+          const values = custom ? readNumbers(lamp, lab[commonKey]) : {};
+          if (group !== "auto") values.enabled = enabled;
+          rules[id] = values;
+        } else {
+          delete rules[id];
+        }
+      }
+      lab[lightsKey] = rules;
+    }
+  }
+
+  _restoreLabLightRules(lab) {
+    const root = this.shadowRoot;
+    for (const [group, {commonKey, lightsKey, fields}] of Object.entries(LAB_LIGHT_RULES)) {
+      const shared = lab[commonKey] || {};
+      const writeNumbers = (container, rule) => {
+        for (const input of container.querySelectorAll("[data-lab-rule-number]")) {
+          const key = input.dataset.labRuleNumber;
+          input.value = String(rule[key] ?? shared[key] ?? fields[key].defaultValue);
+        }
+      };
+      const common = root.querySelector(`[data-lab-common="${group}"]`);
+      if (common) writeNumbers(common, shared);
+      const list = root.querySelector(`[data-lab-light-list="${group}"]`);
+      if (!list) continue;
+      for (const lamp of list.querySelectorAll("[data-lab-lamp]")) {
+        const id = lamp.dataset.labLamp;
+        const values = lab[lightsKey]?.[id] || {};
+        lamp.querySelector("[data-lab-light-enabled]").checked = group !== "auto"
+          ? values.enabled !== false : (lab.auto_lights || []).includes(id);
+        lamp.querySelector("[data-lab-light-custom]").checked = Object.keys(fields).some(key => key in values);
+        writeNumbers(lamp, values);
+      }
+    }
+  }
+
+  _wireLabLightRules() {
+    for (const list of this.shadowRoot.querySelectorAll("[data-lab-light-list]")) {
+      const common = this.shadowRoot.querySelector(`[data-lab-common="${list.dataset.labLightList}"]`);
+      const editors = [...list.querySelectorAll("[data-lab-light-edit]")];
+      for (const button of editors) {
+        button.addEventListener("click", () => {
+          const open = button.getAttribute("aria-expanded") !== "true";
+          for (const editor of editors) {
+            const expanded = editor === button && open;
+            editor.setAttribute("aria-expanded", String(expanded));
+            editor.closest("[data-lab-lamp]").querySelector("[data-lab-light-editor]").hidden = !expanded;
+          }
+        });
+      }
+      const toggles = [...list.querySelectorAll("[data-lab-light-enabled]")];
+      toggles.forEach(input => input.addEventListener("change", () => this._syncLabControls()));
+      list.querySelector("[data-lab-toggle-all]")?.addEventListener("click", () => {
+        const enabled = toggles.some(input => !input.checked);
+        for (const input of toggles) {
+          input.checked = enabled;
+          input.dataset.edited = "true";
+        }
+        this._markDirty();
+        this._syncLabControls();
+      });
+      for (const input of list.querySelectorAll("[data-lab-light-custom]")) {
+        input.addEventListener("change", () => {
+          if (input.checked) {
+            for (const field of input.closest("[data-lab-lamp]").querySelectorAll("[data-lab-rule-number]")) {
+              const key = field.dataset.labRuleNumber;
+              const value = common.querySelector(`[data-lab-rule-number="${key}"]`).valueAsNumber;
+              field.value = String(Number.isFinite(value) ? value : LAB_LIGHT_RULES[list.dataset.labLightList].fields[key].defaultValue);
+            }
+          }
+          this._syncLabControls();
+        });
+      }
+    }
+  }
+
+  _labMarkup(g) {
+    const c={...LAB_DEFAULTS,...(g.lab||{})},l=(ru,en)=>this._label(ru,en);
+    const number=(key,title)=>{const [min,max,step,unit]=LAB_RANGES[key];return `<label class="lab-field"><span>${esc(title)}</span><div class="lab-number"><input data-lab-key="${key}" id="lab-${key}" type="number" min="${min}" max="${max}" step="${step}" value="${esc(c[key])}"><span>${esc(this.t[unit])}</span></div></label>`;};
+    const card=(name,title,description,fields)=>`<section class="card lab-card"><label class="check-row lab-toggle"><input type="checkbox" id="lab-${name}_enabled" data-lab-key="${name}_enabled" ${c[`${name}_enabled`]?"checked":""} aria-controls="lab-${name}-fields"><strong>${esc(title)}</strong></label><p class="help">${esc(description)}</p><div class="lab-fields" id="lab-${name}-fields" ${c[`${name}_enabled`]?"":"hidden"}>${fields}</div></section>`;
+    const entities=Object.entries(this._hass?.states||{}).filter(([id])=>/^(media_player|binary_sensor|input_boolean)\./.test(id));
+    if(c.pause_entity&&!entities.some(([id])=>id===c.pause_entity))entities.push([c.pause_entity,{attributes:{friendly_name:c.pause_entity}}]);
+    const source=`<label class="lab-field lab-wide"><span>${esc(l("Источник паузы","Pause source"))}</span><select id="lab-pause_entity" data-lab-key="pause_entity"><option value="">${esc(l("Выберите сущность…","Choose an entity…"))}</option>${entities.map(([id,state])=>`<option value="${esc(id)}" ${c.pause_entity===id?"selected":""}>${esc(state.attributes.friendly_name||id)}</option>`).join("")}</select></label><p class="help lab-wide">${esc(l("Медиаплеер должен сообщать о паузе; датчик или переключатель — включаться на время паузы.","Choose a media player that reports pause, or a sensor/helper that turns on while paused."))}</p>`;
+    const hz = l("Гц", "Hz");
+    const ruleLabels = {
+      calm_rate: [l("Мин. частота", "Min. rate"), hz],
+      active_rate: [l("Макс. частота", "Max. rate"), hz],
+      brightness_step: [l("Шаг яркости", "Brightness step"), l("п. п.", "pp")],
+      transition_step: [l("Сокращение за шаг", "Reduction per step"), this.t.sec],
+      scene_transition_step: [l("За шаг со Scene Dynamics", "Per step with Scene Dynamics"), "%"],
+      gamma: [l("Гамма яркости", "Brightness gamma"), ""],
+      red_gain: [l("Красный", "Red"), "%"],
+      green_gain: [l("Зелёный", "Green"), "%"],
+      blue_gain: [l("Синий", "Blue"), "%"],
+    };
+    const ruleNumbers = (group, values) => {
+      const numbers = Object.entries(LAB_LIGHT_RULES[group].fields).map(([key, bounds]) => {
+        const [label, unit] = ruleLabels[key];
+        const {defaultValue, min, max, step} = bounds;
+        return `<label class="lab-field" ${key === "scene_transition_step" ? "data-lab-with-scene" : ""}>
+          <span>${esc(label)}</span><div class="${unit ? "lab-number" : ""}"><input data-lab-rule-number="${key}" type="number" min="${min}" max="${max}" step="${step}" value="${esc(values?.[key] ?? defaultValue)}">
+          ${unit ? `<span>${esc(unit)}</span>` : ""}</div></label>`;
+      });
+      if (group !== "calibration") return numbers.join("");
+      const [gamma, ...balance] = numbers;
+      return `${gamma}<details class="disclosure lab-rgb-balance lab-wide"><summary>${esc(l("Баланс RGB", "RGB balance"))}</summary>
+        <div class="lab-rgb-fields">${balance.join("")}</div></details>`;
+    };
+    const lampIds = Object.keys(this.currentPreset.lights || {});
+    const lightList = group => {
+      const {commonKey, lightsKey, fields} = LAB_LIGHT_RULES[group];
+      const rows = lampIds.map((id, index) => {
+        const values = c[lightsKey]?.[id] || {};
+        const enabled = group !== "auto" ? values.enabled !== false : c.auto_lights.includes(id);
+        const custom = Object.keys(fields).some(key => key in values);
+        const name = this._lightName(id);
+        const editor = `lab-${group}-editor-${index}`, customFields = `${editor}-fields`;
+        return `<div class="lab-light" data-lab-lamp="${esc(id)}">
+          <div class="lab-light-row">
+            <label class="check-row"><input type="checkbox" data-lab-light-enabled ${enabled ? "checked" : ""}><span>${esc(name)}</span></label>
+            <button class="lab-light-edit" type="button" data-lab-light-edit aria-label="${esc(l(`Настройки лампы ${name}`, `Settings for ${name}`))}" aria-controls="${editor}" aria-expanded="false">
+              <span data-lab-rule-kind>${esc(custom ? l("Свои", "Custom") : l("Общие", "Shared"))}</span><span class="lab-light-chevron" aria-hidden="true">›</span>
+            </button>
+          </div>
+          <div class="lab-light-editor" id="${editor}" data-lab-light-editor role="group" aria-label="${esc(name)}" hidden>
+            <label class="check-row"><input type="checkbox" data-lab-light-custom aria-controls="${customFields}" ${custom ? "checked" : ""}><span>${esc(l("Свои настройки", "Custom settings"))}</span></label>
+            <div class="lab-rule-fields" data-lab-custom-fields id="${customFields}" ${custom ? "" : "hidden"}>${ruleNumbers(group, {...c[commonKey], ...values})}</div>
+            ${group !== "calibration" ? `<p class="help lab-light-status" data-lab-light-status="${group}"></p>` : ""}
+          </div>
+        </div>`;
+      }).join("");
+      return `<details class="disclosure lab-light-list lab-wide" data-lab-light-list="${group}">
+        <summary><span>${esc(l("Светильники", "Lights"))}</span><small data-lab-enabled-count></small></summary>
+        ${group === "auto" && lampIds.length > 1 && lampIds.length <= 64 ? '<button type="button" class="secondary lab-light-bulk" data-lab-toggle-all></button>' : ""}
+        ${rows || `<p class="help">${esc(l("Сначала добавьте светильники.", "Add lights first."))}</p>`}
+      </details>`;
+    };
+    const commonRules = group => `<fieldset class="lab-common lab-wide">
+      <legend>${esc(l("Общие настройки", "Shared settings"))}</legend>
+      <div class="lab-rule-fields" data-lab-common="${group}">${ruleNumbers(group, c[LAB_LIGHT_RULES[group].commonKey])}</div>
+    </fieldset>`;
+    const lights=Object.keys(this.currentPreset.lights||{}).map(id=>`<label class="check-row"><input type="checkbox" data-echo-light="${esc(id)}" ${c.echo_lights.includes(id)?"checked":""}><span>${esc(this._lightName(id))}</span></label>`).join("");
+    return `<div class="section-title"><div><h2>Lab</h2><p>${esc(l("Дополнительные функции · пресет", "Optional features · preset"))}: <strong>${esc(this.currentPreset.name)}</strong></p></div><div class="lab-import-actions"><button type="button" class="secondary" id="import-effect">${esc(l("Импортировать эффект","Import effect"))}</button><input type="file" id="effect-file" accept=".json,.zip,application/json,application/zip" hidden></div></div><p id="effects-import-status" class="help" role="status"></p><div class="lab-grid">
+      ${card("dynamics", "Scene Dynamics 2.0", l("Плавно меняет частоту команд в заданном диапазоне по активности сцены.", "Continuously adjusts the command rate within the range as scene activity changes."),
+        `${commonRules("scene")}
+        <div id="dynamics-status" class="lab-activity lab-wide" hidden>
+          <div><span>${esc(l("Активность сцены", "Scene activity"))}</span><span data-lab-activity></span></div>
+          <progress value="0" max="100" aria-label="${esc(l("Активность сцены", "Scene activity"))}"></progress>
+          <div class="lab-activity-estimate"><span>${esc(l("По общему диапазону", "Shared range estimate"))}</span><strong data-lab-common-rate></strong></div>
+        </div>${lightList("scene")}`)}
+      ${card("auto", l("Автоотклик", "Auto response"), l("Сокращает аппаратный переход при скачке яркости выбранных ламп.", "Shortens hardware transitions on brightness jumps for selected lights."),
+        `${commonRules("auto")}${lightList("auto")}`)}
+      ${card("pause",l("Реакция на паузу","Pause response"),l("Плавно меняет насыщенность и яркость при подтверждённой паузе. При воспроизведении возвращает обычный свет.","Adjusts saturation and brightness during a confirmed pause. Resumes normal lighting when playback continues."),source+number("pause_delay",l("Задержка","Delay"))+number("pause_saturation",l("Насыщенность от текущей","Saturation of current color"))+number("pause_brightness",l("Целевая яркость","Target brightness"))+number("pause_transition",l("Переход","Transition")))}
+      ${card("static",l("Неизменные цвета","Unchanged colors"),l("При стабильных цветах Ambilight добавляет освещение, сохранённое перед запуском. Ориентируется на цвета Ambilight.","Blends in lighting saved before Sync when Ambilight colors stay unchanged. Uses the Ambilight color signal."),number("static_timeout",l("Время ожидания","Wait time"))+number("static_mix",l("Доля исходного освещения","Original lighting share"))+number("static_tolerance",l("Допуск изменения цветов","Color change tolerance"))+number("static_transition",l("Переход","Transition")))}
+      ${card("calibration", l("Цветокоррекция", "Color correction"), l("Настраивает полутона и баланс RGB. Гамма 1 нейтральна. Значения выше 1 осветляют полутона.", "Adjusts midtones and RGB balance. Gamma 1 is neutral. Values above 1 brighten midtones."),
+        `${commonRules("calibration")}${lightList("calibration")}`)}
+      ${card("echo","Color Echo",l("Выбранные лампы сохраняют оттенки недавних сцен. Остальные следуют текущему изображению.","Selected lights retain hues from recent scenes. Other lights follow the current picture."),number("echo_seconds",l("Память цвета","Color memory"))+number("echo_strength",l("Сила эффекта","Effect strength"))+`<fieldset class="lab-wide echo-lights"><legend>${esc(l("Светильники","Lights"))}</legend>${lights||`<p class="help">${esc(l("Сначала добавьте светильники в пресет.","Add lights to the preset first."))}</p>`}</fieldset>`)}
+      ${this._customEffectsMarkup(c)}
+      </div><p class="help lab-note">${esc(l("Функции сохраняются в пресете и применяются после сохранения. Чёрные сцены, автоостановка и ручное управление сохраняют приоритет.","Features belong to the preset and apply after saving. Black-scene handling, inactivity stop and manual control take priority."))}</p><p class="help" id="lab-status" role="status"></p>`;
+  }
+
+  _customEffectsMarkup(c) {
+    const l=(ru,en)=>this._label(ru,en),ids=Object.keys(this.currentPreset.lights||{}),entities=Object.keys(this._hass?.states||{}).filter(id=>/^(media_player|binary_sensor|input_boolean|sensor)\./.test(id));
+    return (c.imports||[]).map((item,index)=>{const d=item.definition;return `<section class="card custom-effect" data-custom-id="${esc(d.id)}"><label class="check-row lab-toggle"><input type="checkbox" data-custom-enabled ${item.enabled?"checked":""}><strong>${esc(d.name)}</strong></label><p class="help">${esc(d.description)}</p><p class="help">${esc(d.kind==="behavior"?l("Поведение","Behavior"):l("Цветовой эффект","Color effect"))} · ${esc(d.author||l("Автор не указан","Author unspecified"))} · ${esc(d.revision)}</p><details class="disclosure custom-settings"><summary>${esc(l("Настроить","Configure"))}</summary><div class="lab-fields">${Object.entries(d.parameters).map(([key,p])=>`<label class="lab-field"><span>${esc(p.label)}</span><input type="number" min="${p.min}" max="${p.max}" step="any" value="${esc(item.parameters[key]??p.default)}" data-effect-param="${esc(key)}"></label>`).join("")}${Object.entries(d.inputs).map(([key,p])=>{const current=item.inputs[key]||p.default,options=[...new Set([...entities,...(current?[current]:[])])];return `<label class="lab-field lab-wide"><span>${esc(p.label)}</span><select data-effect-input="${esc(key)}"><option value="">${esc(l("Не выбран","Not selected"))}</option>${options.map(id=>`<option value="${esc(id)}" ${current===id?"selected":""}>${esc(this._lightName(id))}</option>`).join("")}</select></label>`;}).join("")}<fieldset class="lab-wide echo-lights"><legend>${esc(l("Светильники","Lights"))}</legend>${ids.map(id=>`<label class="check-row"><input type="checkbox" data-effect-light="${esc(id)}" ${item.lights.includes(id)?"checked":""}><span>${esc(this._lightName(id))}</span></label>`).join("")}</fieldset></div></details><p class="help effect-error" data-effect-error="${esc(d.id)}" role="status"></p><div class="effect-actions"><button type="button" class="secondary" data-effect-export="${esc(d.id)}">${esc(l("Экспорт","Export"))}</button><button type="button" class="secondary" data-effect-up="${esc(d.id)}" ${index===0?"disabled":""}>${esc(l("Выше","Move up"))}</button><button type="button" class="secondary danger" data-effect-delete="${esc(d.id)}">${esc(l("Удалить","Delete"))}</button></div></section>`;}).join("");
+  }
+
+  async _importEffectFile(file) {
+    if(!file)return;
+    this._readCurrentPresetControls();
+    const preset=this.currentPreset,entry=this._entryId,epoch=this._entryEpoch;
+    const message=this.shadowRoot.getElementById("effects-import-status"),button=this.shadowRoot.getElementById("import-effect");
+    button.disabled=true;message.textContent=this._label("Проверка файла…","Validating file…");
+    try{
+      if(file.size>131072)throw Error(this._label("Максимальный размер — 128 КБ","Maximum file size is 128 KB"));
+      const encoded=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result).split(",")[1]);reader.onerror=()=>reject(Error("File read failed"));reader.readAsDataURL(file);});
+      const result=await this._hass.connection.sendMessagePromise({type:"ambilight_sync/preview_effects",filename:file.name,data:encoded});
+      if(this.currentPreset!==preset||this._entryId!==entry||this._entryEpoch!==epoch)return;
+      const incoming=result.effects,existing=preset.global.lab?.imports||[];
+      if(!Array.isArray(incoming)||!incoming.length||new Set([...existing.map(i=>i.definition.id),...incoming.map(d=>d.id)]).size>8)throw Error(this._label("Можно хранить до 8 расширений в пресете","A preset can contain up to 8 extensions"));
+      const dialog=this._showModal(this._label("Импорт расширений","Import extensions"),`<div class="effect-import-preview">${incoming.map(d=>`<h3>${esc(d.name)}</h3><p>${esc(d.description)}</p><p class="help">${esc(d.author)} · ${esc(d.revision)} · ${esc(d.kind==="behavior"?this._label("Поведение ламп","Light behavior"):this._label("Цветовой эффект","Color effect"))}${existing.some(i=>i.definition.id===d.id)?` · ${esc(this._label("Обновление существующего","Updates an existing extension"))}`:""}</p>`).join("")}</div><p class="help">${esc(this._label("Будут добавлены выключенными в черновик этого пресета. Назначьте лампы и примените изменения.","Added disabled to this preset's draft. Assign lights and apply changes."))}</p><button type="button" class="primary" id="effect-import-confirm">${esc(this._label("Добавить в черновик","Add to draft"))}</button>`);
+      dialog.querySelector("#effect-import-confirm").onclick=()=>{
+        if(this.currentPreset!==preset||this._entryId!==entry||this._entryEpoch!==epoch){dialog.remove();return;}
+        const values=clone(preset.global.lab?.imports||[]);
+        for(const definition of incoming){const index=values.findIndex(i=>i.definition.id===definition.id),old=values[index],item={definition,enabled:false,lights:old?.lights||[],parameters:Object.fromEntries(Object.entries(definition.parameters).map(([key,p])=>[key,Math.min(p.max,Math.max(p.min,old?.parameters?.[key]??p.default))])),inputs:Object.fromEntries(Object.entries(definition.inputs).map(([key,p])=>[key,old?.inputs?.[key]??p.default]))};if(index<0)values.push(item);else values[index]=item;}
+        preset.global.lab={...LAB_DEFAULTS,...(preset.global.lab||{}),imports:values};dialog.remove();this._markDirty();this._render();
+      };
+      message.textContent="";
+    }catch(error){message.textContent=String(error?.message||error);}finally{button.disabled=false;}
+  }
+
+  _wireEffectImports() {
+    const root=this.shadowRoot;
+    root.getElementById("import-effect")?.addEventListener("click",()=>root.getElementById("effect-file").click());
+    root.getElementById("effect-file")?.addEventListener("change",e=>{const file=e.target.files?.[0];e.target.value="";this._importEffectFile(file);});
+    root.querySelectorAll("[data-custom-enabled]").forEach(input=>input.addEventListener("change",()=>{if(input.checked&&root.querySelectorAll("[data-custom-enabled]:checked").length>4){input.checked=false;root.getElementById("effects-import-status").textContent=this._label("Можно включить до 4 расширений одновременно","Up to 4 extensions can be enabled at once");}}));
+    root.querySelectorAll("[data-effect-delete]").forEach(button=>button.onclick=()=>{this._readCurrentPresetControls();this.currentPreset.global.lab.imports=this.currentPreset.global.lab.imports.filter(i=>i.definition.id!==button.dataset.effectDelete);this._markDirty();this._render();});
+    root.querySelectorAll("[data-effect-up]").forEach(button=>button.onclick=()=>{this._readCurrentPresetControls();const items=this.currentPreset.global.lab.imports,index=items.findIndex(i=>i.definition.id===button.dataset.effectUp);if(index>0){[items[index-1],items[index]]=[items[index],items[index-1]];this._markDirty();this._render();}});
+    root.querySelectorAll("[data-effect-export]").forEach(button=>button.onclick=()=>{this._readCurrentPresetControls();const item=this.currentPreset.global.lab.imports.find(i=>i.definition.id===button.dataset.effectExport);const definition=clone(item.definition);for(const [key,value] of Object.entries(item.parameters))definition.parameters[key].default=value;for(const [key,value] of Object.entries(item.inputs))definition.inputs[key].default=value;const url=URL.createObjectURL(new Blob([JSON.stringify(definition,null,2)],{type:"application/json"})),a=document.createElement("a");a.href=url;a.download=`${definition.id}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);});
   }
 
   _renderLoading() { this.shadowRoot.innerHTML = `<style>${this._css()}</style><main><div class="loading">Ambilight Sync…</div></main>`; }
@@ -1825,7 +2232,7 @@ class AmbilightSyncPanel extends HTMLElement {
     this.shadowRoot.innerHTML = `<style>${this._css()}</style><main>
       ${this._brandMarkup()}
       <nav class="primary-nav" role="tablist" aria-label="${esc(t.title)}">
-        ${[["atmosphere",t.atmosphere],["lights",t.lights],["settings",t.settings]].map(([id,label]) => `<button id="nav-${id}" type="button" role="tab" data-tab="${id}" aria-selected="${this._tab === id}" aria-controls="panel-${id}" tabindex="${this._tab === id ? 0 : -1}">${esc(label)}</button>`).join("")}
+        ${[["atmosphere",t.atmosphere],["lights",t.lights],["settings",t.settings],["lab","Lab"]].map(([id,label]) => `<button id="nav-${id}" type="button" role="tab" data-tab="${id}" aria-selected="${this._tab === id}" aria-controls="panel-${id}" tabindex="${this._tab === id ? 0 : -1}">${esc(label)}</button>`).join("")}
       </nav>
       <div id="status-error" role="alert" class="status-error" hidden><span data-error-message></span><button type="button" id="dismiss-error" aria-label="${esc(this._label("Закрыть сообщение об ошибке","Dismiss error message"))}">×</button></div>
       <button id="reload-config" class="secondary" type="button" ${this._conflict ? "" : "hidden"}>${this.t === TEXT.ru ? "Обновить настройки" : "Reload settings"}</button>
@@ -1851,17 +2258,21 @@ class AmbilightSyncPanel extends HTMLElement {
         <div class="lights-grid">${lightCards || `<div class="empty-state">${esc(t.noLights)}</div>`}</div>
       </div>
 
+      <div id="panel-lab" role="tabpanel" aria-labelledby="nav-lab" data-tab-panel="lab" ${this._tab === "lab" ? "" : "hidden"}>${this._labMarkup(g)}</div>
       <div id="panel-settings" role="tabpanel" aria-labelledby="nav-settings" data-tab-panel="settings" ${this._tab === "settings" ? "" : "hidden"}>
         <div class="section-title"><div><h2>${esc(t.settings)}</h2><p>${esc(t.globalHint)}</p></div></div>
         ${this._settingsMarkup(g)}
         <section class="card behavior-card"><label class="check-row restore-control"><input id="restore_on_stop" type="checkbox" ${g.restore_on_stop !== false ? "checked" : ""}><span>${esc(t.restore)}</span></label><p>${esc(this._label("При остановке вернётся исходное состояние ламп. Светильники под ручным управлением не изменяются.","Stopping restores the lights’ original states. Lights under manual control are left as they are."))}</p>${this._range("restore_transition",this._label("Плавность восстановления", "Restore transition"),g.restore_transition??1.5)}</section>
+        <section class="card external-card"><h2>${esc(this._label("Внешнее управление", "External control"))}</h2><p class="help">${esc(this._label("Если цвет или яркость изменены вне Sync. Настройка относится к этому пресету.","When a light is changed outside Sync. This setting belongs to this preset."))}</p><div class="control"><label class="control-title" for="external_control">${esc(this._label("При внешнем изменении", "When a light changes externally"))}</label><select id="external_control">${[["continue",this._label("Продолжать Sync","Continue Sync")],["release",this._label("Уступить управление","Release control")],["temporary",this._label("Уступить временно","Release temporarily")]].map(([value,label])=>`<option value="${value}" ${(g.external_control||"continue")===value?"selected":""}>${esc(label)}</option>`).join("")}</select></div><div id="external-options" ${!g.external_control||g.external_control==="continue"?"hidden":""}><div id="external-timeout-control" ${g.external_control!=="temporary"?"hidden":""}>${this._range("external_timeout",this._label("Вернуть через", "Resume after"),g.external_timeout??60)}</div>${this._range("external_transition",this._label("Плавность возврата", "Resume transition"),g.external_transition??2)}<p class="help">${esc(this._label("Выключенная извне лампа остаётся под ручным управлением. Для возврата включите её участие на вкладке «Светильники».","An externally switched-off light stays under manual control. Re-enable its participation on the Lights tab to resume."))}</p></div></section>
         <section class="card backup-card"><h2>${esc(this._label("Резервная копия","Backup & Restore"))}</h2><p class="help">${esc(this._label("Все пресеты, настройки, назначения ламп и общая комната. Пароли и данные подключения TV не входят в файл.","All presets, settings, light assignments and shared geometry. TV credentials and connection data are excluded."))}</p><div class="backup-actions"><button type="button" id="backup-export" class="secondary">${esc(this._label("Экспорт JSON","Export JSON"))}</button><button type="button" id="backup-import" class="secondary">${esc(this._label("Импорт JSON…","Import JSON…"))}</button><input id="backup-file" type="file" accept="application/json,.json" hidden></div><p id="backup-status" class="help" aria-live="polite"></p></section>
-        <section class="card diagnostics-card"><div class="diagnostics-heading"><h2>${esc(t.diagnostics)}</h2><span class="eyebrow">${esc(t.tvDiagnostics)}</span></div><p id="tv-diagnostics">${esc(t.targetRate)} ${status?.diagnostics?.tv?.target_poll_rate_hz ?? g.poll_rate} Hz · ${esc(t.actualRate)} ${status?.diagnostics?.tv?.actual_poll_rate_hz ?? 0} Hz</p><p id="renderer-diagnostics">${esc(status?.diagnostics?.rendering?.active_mode || "classic")}</p><p>${esc(t.serviceHint)}</p></section>
+        ${this._debugMarkup(g, status)}
       </div>
 
-      <div class="actions" ${this._dirty ? "" : "hidden"}><p id="save-feedback" class="save-feedback" role="status" hidden></p><div class="save-bar"><span class="save-hint">${esc(this._label("Есть несохранённые изменения","Unsaved changes"))}</span><button id="discard" type="button" class="secondary">${esc(this._label("Отменить","Discard"))}</button><button id="save" class="primary" aria-live="polite">${esc(t.save)}</button></div></div>
+      <div class="actions" hidden><p id="save-feedback" class="save-feedback" role="status" hidden></p><div class="save-bar"><div class="save-controls"><span class="save-hint">${esc(this._label("Есть несохранённые изменения","Unsaved changes"))}</span><button id="discard" type="button" class="secondary">${esc(this._label("Отменить","Discard"))}</button><button id="save" type="button" class="primary">${esc(t.save)}</button></div><span id="save-notice" role="status" hidden></span></div></div>
     </main>`;
     this._wireEvents();
+    this._updateDiagnosticsDom(status.diagnostics || {});
+    this._syncSaveBar();
   }
 
   _css() { return `
@@ -1893,7 +2304,7 @@ class AmbilightSyncPanel extends HTMLElement {
     .logo{display:grid;place-items:center;flex:0 0 38px;width:38px;height:38px;color:var(--ui-action);background:var(--ui-selected);border-radius:12px}.logo svg{width:26px;height:26px}
     h1{font-size:28px;font-weight:600;line-height:34px;letter-spacing:-.7px;margin:0}h2{font-size:20px;font-weight:600;line-height:26px;letter-spacing:-.3px;margin:0 0 16px}
     p{color:var(--ui-muted);line-height:1.47;margin:8px 0 16px}header p{font-size:13px;line-height:19px;margin:2px 0 0}.version{font-size:12px;color:var(--ui-muted);padding:5px 10px;background:var(--ui-subtle);border-radius:999px;font-variant-numeric:tabular-nums}
-    .primary-nav{display:flex;gap:4px;width:468px;max-width:100%;padding:4px;margin:0 0 24px;border-radius:16px;background:var(--ui-subtle)}
+    .primary-nav{display:grid;grid-template-columns:1.1fr 1.35fr 1.1fr .55fr;gap:4px;width:560px;max-width:100%;padding:4px;margin:0 0 24px;border-radius:16px;background:var(--ui-subtle)}
     .primary-nav button{flex:1;min-width:0;min-height:44px;padding:10px 12px;border-radius:14px;font-size:14px;color:var(--ui-muted);background:none;white-space:nowrap}
     .primary-nav [aria-selected=true]{color:var(--ui-text);background:var(--ui-surface);box-shadow:var(--ui-float)}
     .card,.light-card{min-width:0;padding:24px;border:0;border-radius:24px;background:var(--ui-surface);box-shadow:var(--ui-shadow);margin-bottom:20px}
@@ -1939,15 +2350,47 @@ class AmbilightSyncPanel extends HTMLElement {
     .position-point{position:absolute;z-index:4;width:14px;height:14px;border-radius:50%;background:var(--ui-accent);box-shadow:0 0 0 4px color-mix(in srgb,var(--ui-accent) 15%,transparent);transform:translate(-50%,-50%)}
     .spread-summary{font-size:12px;line-height:18px;color:var(--ui-muted);min-height:18px;margin-bottom:16px}.position-range{display:block;font-size:13px;margin-top:14px}.position-range>span{display:block;margin-bottom:6px}.position-range .help{margin-top:8px}.subhead{font-size:13px;font-weight:500;color:var(--ui-muted);margin:14px 0 10px}.source-list{display:flex;flex-direction:column;gap:8px}.source-row{display:grid;grid-template-columns:minmax(0,1fr) 96px 44px;gap:8px;align-items:center}.weight{display:flex;align-items:center;gap:3px}.weight input{padding:10px 8px;text-align:center}.weight span{font-size:12px;color:var(--ui-muted)}.icon-btn{width:44px;height:44px;padding:0;font-size:22px;background:transparent}.add-source{width:100%;margin-top:12px;font-size:13px}
     .override-box{border-top:1px solid var(--ui-border);margin-top:8px;padding-top:8px}.override-box>p{font-size:13px;margin:8px 0 20px}.override-grid{display:flex;flex-direction:column;gap:20px}.override-row{display:grid;grid-template-columns:1fr;gap:10px}.override-check{display:flex;align-items:center;gap:10px;min-height:24px;font-size:13px;cursor:pointer}.override-row select{font-size:13px}.check-row{display:flex;align-items:center;gap:12px;font-size:14px;cursor:pointer}.check-row input{flex:0 0 40px;width:40px;height:24px;border:0;border-radius:999px;background:var(--ui-track)}.check-row input:before{content:"";position:absolute;left:3px;top:3px;width:18px;height:18px;border-radius:50%;background:var(--ui-surface);transition:translate .16s}.check-row input:checked{background:var(--ui-accent)}.check-row input:checked:before{translate:16px 0;background:var(--ui-on-accent)}.check-row input:after{display:none}
-    .behavior-card{margin-top:20px}.behavior-card p,.diagnostics-card p{font-size:13px;margin:14px 0 0}.diagnostics-heading{display:flex;align-items:center;justify-content:space-between;gap:16px}.diagnostics-heading h2{margin:0}.eyebrow{color:var(--ui-muted);font-size:12px}
+    .behavior-card{margin-top:20px}.behavior-card p,.debug-diagnostics p{font-size:13px;margin:14px 0 0}.diagnostics-heading{display:flex;align-items:center;justify-content:space-between;gap:16px}.diagnostics-heading h2{margin:0}.eyebrow{color:var(--ui-muted);font-size:12px}
     .info-tip{position:relative;flex:none;color:var(--ui-muted)}.info-tip>summary{width:28px;min-height:28px;border-radius:50%;display:grid;place-items:center;font-size:16px;font-weight:400}.info-tip>summary:after{display:none}.info-tip>summary:hover{background:var(--ui-subtle)}
     .info-content{display:none;position:absolute;right:0;top:32px;width:min(280px,72vw);padding:16px;border:1px solid var(--ui-border);border-radius:14px;background:var(--ui-surface);color:var(--ui-text);box-shadow:var(--ui-float);z-index:12;font-size:13px;line-height:19px}.info-tip[open]>.info-content{display:block}
+    .lab-import-actions{display:flex;gap:10px;flex-wrap:wrap}.effect-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:20px}.effect-actions button{min-height:44px}.effect-error{color:var(--ui-error)}.effect-error:empty{display:none}.custom-settings>.lab-fields{padding-top:16px;margin-top:0}.lab-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}.lab-card{min-width:0;margin-bottom:0}.lab-toggle{font-size:18px}.lab-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 20px;margin-top:24px}.lab-fields>.help{margin:0}.lab-fields>.lab-field{display:grid;grid-template-rows:subgrid;grid-row:span 2;row-gap:8px;margin-bottom:12px}.lab-field:not(.lab-wide)>span{display:flex;align-items:flex-end}.lab-field{display:flex;flex-direction:column;gap:8px;min-width:0}.lab-wide{grid-column:1/-1}.lab-number{display:grid;grid-template-columns:minmax(0,1fr) 24px;gap:8px;align-items:center}.lab-number input{width:100%;min-width:0}.echo-lights{border:1px solid var(--ui-border);border-radius:14px;padding:16px;min-width:0}.echo-lights legend{padding:0 6px}.echo-lights .check-row{margin:8px 0}.lab-note{margin:24px 0}.external-card .control-title{display:block;margin-bottom:8px}.external-card .range-row{margin-top:12px}.external-card #external-options{display:grid;gap:20px;margin-top:24px}.effect-status:empty{display:none}.effect-status{margin:12px 0}@container(max-width:800px){.lab-grid{grid-template-columns:1fr}}@container(max-width:380px){.lab-fields{grid-template-columns:1fr}.lab-field:not(.lab-wide)>span{min-height:0}.primary-nav{grid-template-columns:repeat(2,minmax(0,1fr))}.primary-nav button{font-size:13px!important;padding:10px 6px!important}}
+    #lab-dynamics-fields,#lab-auto-fields{margin-top:18px;row-gap:12px}
+    .lab-common{min-width:0;margin:0;padding:0;border:0}.lab-common legend{padding:0;margin-bottom:8px;font-size:13px;font-weight:600;color:var(--ui-muted)}
+    .lab-rule-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:end;gap:12px 16px;font-size:14px}
+    .lab-rule-fields .lab-field{gap:6px}.lab-rule-fields .lab-number{grid-template-columns:minmax(0,1fr) auto;gap:7px}
+    .lab-rule-fields .lab-number>span{white-space:nowrap;color:var(--ui-muted);font-size:12px}
+    .lab-rule-fields .lab-field[data-lab-with-scene]{grid-column:1/-1;flex-direction:row;align-items:center;justify-content:space-between;gap:12px}
+    .lab-rule-fields [data-lab-with-scene] .lab-number{width:105px;flex:none}
+    .lab-rgb-balance{border-top:1px solid var(--ui-border)}
+    .lab-rgb-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(94px,1fr));gap:12px;padding:0 0 4px}
+    .lab-light-list{border-top:1px solid var(--ui-border);min-width:0}.lab-light-list>summary>span{flex:1}
+    .lab-light-list>summary>small{color:var(--ui-muted);font-size:12px;font-weight:400;font-variant-numeric:tabular-nums}
+    .lab-light-bulk{margin:0 0 8px;padding:6px 12px;font-size:13px}
+    .lab-light+.lab-light{border-top:1px solid var(--ui-border)}
+    .lab-light-row{display:flex;align-items:center;gap:8px;min-height:48px}
+    .lab-light-row>.check-row{flex:1;min-width:0;min-height:44px;overflow-wrap:anywhere}
+    .lab-light-edit{gap:8px;padding:6px 8px;background:none;font-size:12px;color:var(--ui-muted);white-space:nowrap}
+    .lab-light-chevron{font-size:22px;line-height:22px;transition:transform .16s}.lab-light-edit[aria-expanded=true] .lab-light-chevron{transform:rotate(90deg)}
+    .lab-light-editor{padding:2px 0 12px}.lab-light-editor>.check-row{min-height:44px}.lab-light-status{margin:8px 0 0}.lab-light-status:empty{display:none}
+    .lab-activity{display:grid;gap:5px;font-size:12px;color:var(--ui-muted);font-variant-numeric:tabular-nums;padding:0 0 3px}
+    .lab-activity>div{display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:4px 10px}
+    .lab-activity-estimate strong{font-weight:600;color:var(--ui-text)}
+    .lab-activity progress{appearance:none;display:block;width:100%;height:5px;border:0;border-radius:999px;background:var(--ui-track);overflow:hidden}
+    .lab-activity progress::-webkit-progress-bar{background:var(--ui-track)}.lab-activity progress::-webkit-progress-value{background:var(--ui-accent);border-radius:999px}
+    .lab-activity progress::-moz-progress-bar{background:var(--ui-accent);border-radius:999px}
     .inactivity-settings,.connection-debug{grid-column:1/-1;min-width:0}.inactivity-settings h3{font-size:15px;margin:16px 0}.inactivity-settings .control-title{display:block;margin-bottom:8px}.connection-debug pre{font:12px/1.6 ui-monospace,monospace;white-space:pre-wrap;overflow-wrap:anywhere;padding:16px;border-radius:14px;background:var(--ui-subtle)}
     #debug-toggle{margin-top:0;font-size:13px}.debug-settings{margin-top:20px}.debug-settings>strong{font-weight:600}.debug-settings>p{font-size:13px}.debug-settings .section-controls{padding-bottom:0}.debug-pipeline{grid-column:1/-1;min-width:0;font-size:13px}.debug-pipeline>strong{font-weight:500}.debug-pipeline select{margin-top:12px}.debug-pipeline pre{font:12px/1.6 ui-monospace,monospace;white-space:pre-wrap;overflow-wrap:anywhere;padding:16px;border-radius:14px;background:var(--ui-subtle)}
+    .debug-diagnostics{grid-column:1/-1;min-width:0;border-top:1px solid var(--ui-border);padding-top:16px}
     .actions{position:sticky;bottom:max(20px,env(safe-area-inset-bottom));display:flex;flex-direction:column;align-items:center;gap:12px;width:max-content;max-width:100%;margin:24px auto 0;padding:0;z-index:5;pointer-events:none}
+    .actions:not([hidden]){animation:save-bar-enter 200ms cubic-bezier(.2,.65,.3,1) both}
+    .actions[data-leaving]:not([hidden]){animation:save-bar-exit ${SAVE_EXIT_MS}ms ease-in both}
+    @keyframes save-bar-enter{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+    @keyframes save-bar-exit{from{opacity:1;transform:translateY(0)}to{opacity:0;transform:translateY(8px)}}
     /* Chromatic 0.1.1 .footer: same surface, padding, capsule and shadow.
        Its position stays within the HA content area, including with the sidebar open. */
     .save-bar{display:flex;align-items:center;justify-content:center;gap:12px;max-width:100%;padding:8px 10px 8px 24px;border-radius:999px;background:var(--ui-surface);box-shadow:0 4px 14px #1f2b4026;pointer-events:auto}
+    .save-controls{display:flex;align-items:center;justify-content:center;gap:12px;max-width:100%}
+    .save-bar[data-confirmed]{padding:12px 20px;pointer-events:none;font-size:14px}
     .save-hint{font-size:13px;margin-right:8px;white-space:nowrap}
     .actions button{min-height:44px;padding:10px 14px;white-space:nowrap;font-size:15px}.actions #save{min-width:0;max-width:none;padding:12px 20px}.actions .secondary{background:var(--ui-subtle)}
     .save-feedback{width:100%;max-width:560px;padding:12px 16px;margin:0;border-radius:14px;background:var(--ui-error-bg);color:var(--ui-error);font-size:13px;overflow-wrap:anywhere;pointer-events:auto}
@@ -1977,7 +2420,7 @@ class AmbilightSyncPanel extends HTMLElement {
     .copy-targets .check-row input{flex:0 0 20px;width:20px;height:20px;border:1px solid var(--ui-muted);border-radius:5px;background:var(--ui-surface)}.copy-targets .check-row input:before{display:none}.copy-targets .check-row input:checked{background:var(--ui-accent);border-color:var(--ui-accent)}.copy-targets .check-row input:checked:after{display:block;content:"";left:6px;top:3px;width:4px;height:8px;border:solid var(--ui-on-accent);border-width:0 2px 2px 0;transform:rotate(45deg)}
 
     @container(max-width:600px){.room-coordinates input,.refinement-dialog select,.source-row select,select,input[type=number]{font-size:16px}}
-    @container(max-width:700px){.save-bar{gap:8px;padding:8px}.save-hint{display:none}.actions button{font-size:14px}}
+    @container(max-width:700px){.save-bar{padding:8px}.save-controls{gap:8px}.save-hint{display:none}.actions button{font-size:14px}}
     @container(max-width:360px){.actions button,.actions #save{font-size:12px;padding:12px 10px}}
     .room-node text.room-number{fill:var(--ui-text);paint-order:stroke;stroke:var(--ui-surface);stroke-width:2px}
     @media(prefers-reduced-motion:reduce){*,*:before,*:after{transition:none!important;animation:none!important}}
